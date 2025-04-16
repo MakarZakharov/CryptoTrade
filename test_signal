@@ -1,0 +1,213 @@
+                # щоб ця штука працювала треба створити файл .env з BINANCE_API_KEY і BINANCE_API_SECRET в тій же папці що і цей
+import ccxt
+import os
+import sys
+from dotenv import load_dotenv
+import time
+
+USE_TESTNET = False
+load_dotenv()
+
+API_KEY = os.getenv('BINANCE_API_KEY')
+API_SECRET = os.getenv('BINANCE_API_SECRET')
+
+if not API_KEY or not API_SECRET:
+    print("❌ Помилка: API ключі не знайдено у файлі .env.")
+    sys.exit("Завершення роботи через відсутність ключів.")
+
+
+def get_valid_input(prompt, validation_func, error_message):
+    while True:
+        user_input = input(prompt).strip()
+        if validation_func(user_input):
+            return user_input
+        else:
+            print(error_message)
+
+def get_positive_float_input(prompt):
+    while True:
+        try:
+            value = float(input(prompt).strip())
+            if value > 0.000001:
+                return value
+            else:
+                print("❌ Число повинно бути більше нуля.")
+        except ValueError:
+            print("❌ Замала кількість.")
+
+
+def connect_to_binance(api_key, secret_key, use_testnet):
+    print("\n🔄 Спроба підключення до Binance...")
+    exchange = ccxt.binance({'apiKey': api_key, 'secret': secret_key, 'enableRateLimit': True})
+    if use_testnet:
+        print("   Увімкнено режим ТЕСТОВОЇ МЕРЕЖІ.")
+        exchange.set_sandbox_mode(True)
+    try:
+        exchange.fetch_time()
+        print("   Перевірка з'єднання... ОК")
+        print("   Завантаження ринків...")
+        exchange.load_markets()
+        print(f"✅ Підключено! Доступно ринків: {len(exchange.markets)}")
+        return exchange
+    except ccxt.AuthenticationError: print("❌ ПОМИЛКА АВТЕНТИФІКАЦІЇ: Неправильні ключі або дозволи.")
+    except ccxt.NetworkError as e: print(f"❌ ПОМИЛКА МЕРЕЖІ: {e}. {'Перевірте час!' if '-1021' in str(e) else 'Перевірте інтернет.'}")
+    except Exception as e: print(f"❌ НЕВІДОМА ПОМИЛКА підключення: {e}")
+    print("   Не вдалося підключитися.")
+    return None
+
+
+def place_market_order(exchange, symbol, side, amount):
+    print(f"   ➡️ Спроба {side.upper()} {amount:.8f} {symbol.split('/')[0]} на **{symbol}**...")
+    try:
+        order_func = exchange.create_market_buy_order if side == 'buy' else exchange.create_market_sell_order
+        order = order_func(symbol, amount)
+        print(f"   ✅ Ордер {side.upper()} на {symbol} розміщено (ID: {order.get('id', 'N/A')})")
+        return order
+    except ccxt.InsufficientFunds: print(f"   ❌ Недостатньо коштів для {side} {symbol}.")
+    except ccxt.InvalidOrder as e: print(f"   ❌ Неправильний ордер ({symbol}). Мін. сума/кількість? {e}")
+    except Exception as e: print(f"   ❌ Помилка ордеру {side} {symbol}: {e}")
+    return None
+
+
+def get_approx_conversion_info(exchange, from_currency, to_currency):
+    from_curr = from_currency.upper()
+    to_curr = to_currency.upper()
+    if from_curr == to_curr: return 1.0, f"{from_curr}", None
+
+    markets = exchange.markets
+    def _fetch_price(symbol):
+        try: return exchange.fetch_ticker(symbol).get('last')
+        except Exception: return None
+
+    direct_symbol = f"{from_curr}/{to_curr}"
+    price = _fetch_price(direct_symbol)
+    if price and price > 0: return price, direct_symbol, None
+
+
+    inverse_symbol = f"{to_curr}/{from_curr}"
+    price = _fetch_price(inverse_symbol)
+    if price and price > 0: return 1 / price, f"(via {inverse_symbol})", None
+
+    if from_curr != 'USDT' and to_curr != 'USDT':
+        symbol1 = f"{from_curr}/USDT"
+        symbol2 = f"{to_curr}/USDT"
+        price1 = _fetch_price(symbol1)
+        price2 = _fetch_price(symbol2)
+        if price1 and price2 and price2 > 0:
+            return price1 / price2, "(via USDT)", "USDT"
+
+    return None, None, None
+
+
+def execute_conversion_by_trade(exchange, amount, from_currency, to_currency, rate, path, intermediary):
+    from_curr = from_currency.upper()
+    to_curr = to_currency.upper()
+    approx_result = amount * rate
+
+    print(f"\n--- Підтвердження Конвертації (через Маркет Ордери) ---")
+    print(f"   Дія: Конвертувати {amount:.8f} {from_curr} в ~{approx_result:.8f} {to_curr}")
+    print(f"   Використовуючи шлях: {path}")
+    print(f"   ! Увага: Остаточна сума може відрізнятися через комісії та прослизання ціни.")
+
+    confirm = get_valid_input("   Введіть 'yes' для виконання ордерів: ", lambda x: x.lower() == 'yes', "❌ Введіть 'yes' для підтвердження.")
+    if confirm != 'yes':
+        print("🚫 Конвертацію скасовано.")
+        return
+
+    print("\n🚀 Виконання конвертації...")
+
+    success = False
+    if intermediary is None:
+        if "/" in path and "(via" not in path:
+            symbol_to_trade = path
+            side = 'sell'
+            amount_to_trade = amount
+            print(f"   (Info: Прямий ринок {symbol_to_trade}. Продаж {from_curr}...)")
+            order = place_market_order(exchange, symbol_to_trade, side, amount_to_trade)
+            if order: success = True
+
+        elif "(via " in path:
+            inverse_symbol = path.replace("(via ", "").replace(")", "")
+            symbol_to_trade = inverse_symbol
+            side = 'buy'
+            amount_to_trade = approx_result*
+            print(f"   (Info: Зворотній ринок {symbol_to_trade}. Купівля {to_curr}...)")
+            order = place_market_order(exchange, symbol_to_trade, side, amount_to_trade)
+            if order: success = True
+        else:
+             print(f"   ❌ Невідомий формат шляху для одного ордера: {path}")
+
+    elif intermediary == "USDT":
+         symbol1 = f"{from_curr}/USDT"
+         symbol2 = f"{to_curr}/USDT"
+         print(f"\n   Крок 1: Продаж {from_curr} за USDT ({symbol1})...")
+         order1 = place_market_order(exchange, symbol1, 'sell', amount)
+
+         if order1 and order1.get('status') != 'canceled':
+             time.sleep(1)
+             print(f"\n   Крок 2: Купівля {to_curr} за USDT ({symbol2})...")
+             amount_to_buy_to = approx_result
+             order2 = place_market_order(exchange, symbol2, 'buy', amount_to_buy_to)
+             if order2: success = True
+         else:
+              print(f"   🛑 Крок 1 (Продаж {from_curr}) не вдався. Конвертацію зупинено.")
+    else:
+          print(f"   ❌ Конвертація через посередника '{intermediary}' не підтримується.")
+
+    if success:
+         print("\n🎉 Конвертація (через ринкові ордери) успішна.")
+    else:
+         print("\n⚠️ Конвертація не вдалася")
+
+def run_bot():
+    print("--- Binance_BOT ---")
+    exchange = connect_to_binance(API_KEY, API_SECRET, USE_TESTNET)
+    if not exchange: sys.exit("Помилка підключення")
+    available_markets = list(exchange.markets.keys())
+
+    while True:
+        print("\n--- Головне Меню ---")
+        print("1. Торгівля (Market Order)")
+        print("2. Конвертація Валют (через Market Order)")
+        print("3. Вихід")
+        action = get_valid_input("Ваш вибір (1-3): ", lambda x: x in ['1', '2', '3'], "❌ Введіть 1, 2 або 3.")
+
+        if action == '1':
+            print("\n--- Торгівля ---")
+            symbol = get_valid_input(
+                "Введіть символ пари (напр., BTC/USDT): ",
+                lambda s: s.upper() in available_markets,
+                "❌ Символ не знайдено або невірний формат (БАЗА/КОТИРУВАННЯ)."
+            ).upper()
+            side = get_valid_input(f"Купити чи продати {symbol.split('/')[0]} (buy/sell): ", lambda s: s.lower() in ['buy', 'sell'], "❌ Введіть 'buy' або 'sell'.").lower()
+            amount = get_positive_float_input(f"Кількість {symbol.split('/')[0]} для {side}: ")
+            print(f"\n🚦 Підтвердіть {side.upper()} {amount} {symbol.split('/')[0]}?")
+            if get_valid_input("   Введіть 'yes': ", lambda x: x.lower() == 'yes', "Введіть 'yes' або скасуйте.") == 'yes':
+                place_market_order(exchange, symbol, side, amount)
+            else:
+                print("🚫 Торгівлю скасовано.")
+
+
+        elif action == '2':
+            print("\n--- Конвертація (через Маркет Ордери) ---")
+            amount = get_positive_float_input("Кількість для конвертації: ")
+            from_c = input("З якої валюти (напр., BTC): ").upper().strip()
+            to_c = input("В яку валюту (напр., USDT): ").upper().strip()
+
+            rate, path, intermediary = get_approx_conversion_info(exchange, from_c, to_c)
+
+            if rate is not None:
+                approx_result_display = amount * rate
+                print(f"\n   Приблизний розрахунок: {amount:.8f} {from_c} ≈ {approx_result_display:.8f} {to_c}")
+                print(f"   Розрахунковий курс: {rate:.8f}, Шлях: {path}")
+
+                execute_conversion_by_trade(exchange, amount, from_c, to_c, rate, path, intermediary)
+            else:
+                print(f"\n❌ Не вдалося знайти спосіб конвертації {from_c} в {to_c} для розрахунку курсу.")
+
+        elif action == '3':
+            print("\n Всьо")
+            break
+
+if __name__ == "__main__":
+    run_bot()
