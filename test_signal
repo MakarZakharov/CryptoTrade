@@ -100,6 +100,9 @@ def get_approx_conversion_info(exchange, from_currency, to_currency):
 
 
 def execute_conversion_by_trade(exchange, amount, from_currency, to_currency, rate, path, intermediary):
+    """
+    Запитує підтвердження і виконує конвертацію шляхом ринкових ордерів.
+    """
     from_curr = from_currency.upper()
     to_curr = to_currency.upper()
     approx_result = amount * rate
@@ -130,7 +133,7 @@ def execute_conversion_by_trade(exchange, amount, from_currency, to_currency, ra
             inverse_symbol = path.replace("(via ", "").replace(")", "")
             symbol_to_trade = inverse_symbol
             side = 'buy'
-            amount_to_trade = approx_result*
+            amount_to_trade = approx_result
             print(f"   (Info: Зворотній ринок {symbol_to_trade}. Купівля {to_curr}...)")
             order = place_market_order(exchange, symbol_to_trade, side, amount_to_trade)
             if order: success = True
