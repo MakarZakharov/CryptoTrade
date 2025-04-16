@@ -13,7 +13,7 @@ API_SECRET = os.getenv('BINANCE_API_SECRET')
 
 if not API_KEY or not API_SECRET:
     print("❌ Помилка: API ключі не знайдено у файлі .env.")
-    sys.exit("Завершення роботи через відсутність ключів.")
+    sys.exit()
 
 
 def get_valid_input(prompt, validation_func, error_message):
