@@ -1,9 +1,16 @@
-                # щоб ця штука працювала треба створити файл .env з BINANCE_API_KEY і BINANCE_API_SECRET в тій же папці що і цей
 import ccxt
 import os
 import sys
 from dotenv import load_dotenv
 import time
+import logging
+from decimal import Decimal
+from typing import Dict, Any, Optional, List
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[logging.FileHandler("binance_bot.log"), logging.StreamHandler()])
+logger = logging.getLogger("binance_bot")
+
 
 USE_TESTNET = False
 load_dotenv()
@@ -11,206 +18,438 @@ load_dotenv()
 API_KEY = os.getenv('BINANCE_API_KEY')
 API_SECRET = os.getenv('BINANCE_API_SECRET')
 
+# Minimum balance threshold for conversions
+MIN_BALANCE_THRESHOLD = Decimal('0.001')
+
 if not API_KEY or not API_SECRET:
-    print("❌ Помилка: API ключі не знайдено у файлі .env")
-    sys.exit()
+    logger.error("API keys not found in .env file")
+    sys.exit(1)
 
 
-def get_valid_input(prompt, validation_func, error_message):
-    while True:
-        user_input = input(prompt).strip()
-        if validation_func(user_input):
-            return user_input
-        else:
-            print(error_message)
+class BinanceBot:
+    def __init__(self, api_key: str, api_secret: str, use_testnet: bool = False):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.use_testnet = use_testnet
+        self.exchange = None
+        self.markets = {}
+        self._balance_cache = {}
+        self._balance_time = 0
+        self.intermediaries = ['USDT', 'BUSD', 'BTC', 'ETH', 'BNB']
 
-def get_positive_float_input(prompt):
-    while True:
+    def connect(self) -> bool:
+        """Initialize connection to Binance API"""
         try:
-            value = float(input(prompt).strip())
-            if value > 0.000001:
-                return value
-            else:
-                print("❌ Число повинно бути більше нуля.")
-        except ValueError:
-            print("❌ Замала кількість.")
+            self.exchange = ccxt.binance({
+                'apiKey': self.api_key,
+                'secret': self.api_secret,
+                'enableRateLimit': True,
+                'options': {'defaultType': 'spot', 'createMarketBuyOrderRequiresPrice': False}
+            })
 
+            if self.use_testnet:
+                logger.info("TESTNET MODE ENABLED")
+                self.exchange.set_sandbox_mode(True)
 
-def connect_to_binance(api_key, secret_key, use_testnet):
-    print("\n🔄 Спроба підключення до Binance...")
-    exchange = ccxt.binance({'apiKey': api_key, 'secret': secret_key, 'enableRateLimit': True})
-    if use_testnet:
-        print("   Увімкнено режим ТЕСТОВОЇ МЕРЕЖІ.")
-        exchange.set_sandbox_mode(True)
-    try:
-        exchange.fetch_time()
-        print("   Перевірка з'єднання... ОК")
-        print("   Завантаження ринків...")
-        exchange.load_markets()
-        print(f"✅ Підключено! Доступно ринків: {len(exchange.markets)}")
-        return exchange
-    except ccxt.AuthenticationError: print("❌ ПОМИЛКА АВТЕНТИФІКАЦІЇ: Неправильні ключі або дозволи.")
-    except ccxt.NetworkError as e: print(f"❌ ПОМИЛКА МЕРЕЖІ: {e}. {'Перевірте час!' if '-1021' in str(e) else 'Перевірте інтернет.'}")
-    except Exception as e: print(f"❌ НЕВІДОМА ПОМИЛКА підключення: {e}")
-    print("   Не вдалося підключитися.")
-    return None
+            self.exchange.fetch_time()
+            self.exchange.load_markets()
+            self.markets = self.exchange.markets
+            logger.info(f"Connected! Markets available: {len(self.markets)}")
+            return True
 
+        except Exception as e:
+            logger.error(f"Connection failed: {e}")
+            return False
 
-def place_market_order(exchange, symbol, side, amount):
-    print(f"   ➡️ Спроба {side.upper()} {amount:.8f} {symbol.split('/')[0]} на **{symbol}**...")
-    try:
-        order_func = exchange.create_market_buy_order if side == 'buy' else exchange.create_market_sell_order
-        order = order_func(symbol, amount)
-        print(f"   ✅ Ордер {side.upper()} на {symbol} розміщено (ID: {order.get('id', 'N/A')})")
-        return order
-    except ccxt.InsufficientFunds: print(f"   ❌ Недостатньо коштів для {side} {symbol}.")
-    except ccxt.InvalidOrder as e: print(f"   ❌ Неправильний ордер ({symbol}). Мін. сума/кількість? {e}")
-    except Exception as e: print(f"   ❌ Помилка ордеру {side} {symbol}: {e}")
-    return None
+    def get_balance(self, currency: str = None, force_refresh: bool = False) -> Dict:
+        current_time = time.time()
 
-
-def get_approx_conversion_info(exchange, from_currency, to_currency):
-    from_curr = from_currency.upper()
-    to_curr = to_currency.upper()
-    if from_curr == to_curr: return 1.0, f"{from_curr}", None
-
-    markets = exchange.markets
-    def _fetch_price(symbol):
-        try: return exchange.fetch_ticker(symbol).get('last')
-        except Exception: return None
-
-    direct_symbol = f"{from_curr}/{to_curr}"
-    price = _fetch_price(direct_symbol)
-    if price and price > 0: return price, direct_symbol, None
-
-
-    inverse_symbol = f"{to_curr}/{from_curr}"
-    price = _fetch_price(inverse_symbol)
-    if price and price > 0: return 1 / price, f"(via {inverse_symbol})", None
-
-    if from_curr != 'USDT' and to_curr != 'USDT':
-        symbol1 = f"{from_curr}/USDT"
-        symbol2 = f"{to_curr}/USDT"
-        price1 = _fetch_price(symbol1)
-        price2 = _fetch_price(symbol2)
-        if price1 and price2 and price2 > 0:
-            return price1 / price2, "(via USDT)", "USDT"
-
-    return None, None, None
-
-
-def execute_conversion_by_trade(exchange, amount, from_currency, to_currency, rate, path, intermediary):
-    """
-    Запитує підтвердження і виконує конвертацію шляхом ринкових ордерів.
-    """
-    from_curr = from_currency.upper()
-    to_curr = to_currency.upper()
-    approx_result = amount * rate
-
-    print(f"\n--- Підтвердження Конвертації (через Маркет Ордери) ---")
-    print(f"   Дія: Конвертувати {amount:.8f} {from_curr} в ~{approx_result:.8f} {to_curr}")
-    print(f"   Використовуючи шлях: {path}")
-    print(f"   ! Увага: Остаточна сума може відрізнятися через комісії та прослизання ціни.")
-
-    confirm = get_valid_input("   Введіть 'yes' для виконання ордерів: ", lambda x: x.lower() == 'yes', "❌ Введіть 'yes' для підтвердження.")
-    if confirm != 'yes':
-        print("🚫 Конвертацію скасовано.")
-        return
-
-    print("\n🚀 Виконання конвертації...")
-
-    success = False
-    if intermediary is None:
-        if "/" in path and "(via" not in path:
-            symbol_to_trade = path
-            side = 'sell'
-            amount_to_trade = amount
-            print(f"   (Info: Прямий ринок {symbol_to_trade}. Продаж {from_curr}...)")
-            order = place_market_order(exchange, symbol_to_trade, side, amount_to_trade)
-            if order: success = True
-
-        elif "(via " in path:
-            inverse_symbol = path.replace("(via ", "").replace(")", "")
-            symbol_to_trade = inverse_symbol
-            side = 'buy'
-            amount_to_trade = approx_result
-            print(f"   (Info: Зворотній ринок {symbol_to_trade}. Купівля {to_curr}...)")
-            order = place_market_order(exchange, symbol_to_trade, side, amount_to_trade)
-            if order: success = True
+        if not force_refresh and current_time - self._balance_time < 30 and self._balance_cache:
+            balance = self._balance_cache
         else:
-             print(f"   ❌ Невідомий формат шляху для одного ордера: {path}")
+            try:
+                if self.use_testnet:
+                    balance = {
+                        'free': {'BTC': Decimal('1.5'), 'ETH': Decimal('20.0'), 'BNB': Decimal('50.0'),
+                                 'USDT': Decimal('10000.0'), 'USDC': Decimal('5000.0')},
+                        'used': {'USDT': Decimal('500.0'), 'BTC': Decimal('0.1')},
+                        'total': {}
+                    }
+                    for curr in set(balance['free']) | set(balance['used']):
+                        free = balance['free'].get(curr, Decimal('0'))
+                        used = balance['used'].get(curr, Decimal('0'))
+                        balance['total'][curr] = free + used
+                else:
+                    raw = self.exchange.fetch_balance()
+                    balance = {
+                        'free': {k: Decimal(str(v)) for k, v in raw.get('free', {}).items() if float(v) > 0},
+                        'used': {k: Decimal(str(v)) for k, v in raw.get('used', {}).items() if float(v) > 0},
+                        'total': {k: Decimal(str(v)) for k, v in raw.get('total', {}).items() if float(v) > 0}
+                    }
 
-    elif intermediary == "USDT":
-         symbol1 = f"{from_curr}/USDT"
-         symbol2 = f"{to_curr}/USDT"
-         print(f"\n   Крок 1: Продаж {from_curr} за USDT ({symbol1})...")
-         order1 = place_market_order(exchange, symbol1, 'sell', amount)
+                self._balance_cache = balance
+                self._balance_time = current_time
 
-         if order1 and order1.get('status') != 'canceled':
-             time.sleep(1)
-             print(f"\n   Крок 2: Купівля {to_curr} за USDT ({symbol2})...")
-             amount_to_buy_to = approx_result
-             order2 = place_market_order(exchange, symbol2, 'buy', amount_to_buy_to)
-             if order2: success = True
-         else:
-              print(f"   🛑 Крок 1 (Продаж {from_curr}) не вдався. Конвертацію зупинено.")
-    else:
-          print(f"   ❌ Конвертація через посередника '{intermediary}' не підтримується.")
+            except Exception as e:
+                logger.error(f"Failed to get balance: {e}")
+                if not self._balance_cache:
+                    return {'free': Decimal('0'), 'used': Decimal('0'), 'total': Decimal('0')} if currency else {}
+                balance = self._balance_cache
 
-    if success:
-         print("\n🎉 Конвертація (через ринкові ордери) успішна.")
-    else:
-         print("\n⚠️ Конвертація не вдалася")
+        if currency:
+            curr = currency.upper()
+            return {
+                'free': balance.get('free', {}).get(curr, Decimal('0')),
+                'used': balance.get('used', {}).get(curr, Decimal('0')),
+                'total': balance.get('total', {}).get(curr, Decimal('0'))
+            }
+        return balance
 
-def run_bot():
-    print("--- Binance_BOT ---")
-    exchange = connect_to_binance(API_KEY, API_SECRET, USE_TESTNET)
-    if not exchange: sys.exit("Помилка підключення")
-    available_markets = list(exchange.markets.keys())
+    def place_order(self, symbol: str, side: str, amount: Decimal, is_quote: bool = False) -> Optional[Dict]:
+        try:
+            market = self.markets[symbol]
+            base, quote = market['base'], market['quote']
+            min_amount = Decimal(str(market['limits']['amount']['min']))
+            min_cost = Decimal(str(market.get('limits', {}).get('cost', {}).get('min', 0)))
 
-    while True:
-        print("\n--- Головне Меню ---")
-        print("1. Торгівля (Market Order)")
-        print("2. Конвертація Валют (через Market Order)")
-        print("3. Вихід")
-        action = get_valid_input("Ваш вибір (1-3): ", lambda x: x in ['1', '2', '3'], "❌ Введіть 1, 2 або 3.")
+            price = Decimal(str(self.exchange.fetch_ticker(symbol)['last']))
 
-        if action == '1':
-            print("\n--- Торгівля ---")
-            symbol = get_valid_input(
-                "Введіть символ пари (напр., BTC/USDT): ",
-                lambda s: s.upper() in available_markets,
-                "❌ Символ не знайдено або невірний формат (БАЗА/КОТИРУВАННЯ)."
-            ).upper()
-            side = get_valid_input(f"Купити чи продати {symbol.split('/')[0]} (buy/sell): ", lambda s: s.lower() in ['buy', 'sell'], "❌ Введіть 'buy' або 'sell'.").lower()
-            amount = get_positive_float_input(f"Кількість {symbol.split('/')[0]} для {side}: ")
-            print(f"\n🚦 Підтвердіть {side.upper()} {amount} {symbol.split('/')[0]}?")
-            if get_valid_input("   Введіть 'yes': ", lambda x: x.lower() == 'yes', "Введіть 'yes' або скасуйте.") == 'yes':
-                place_market_order(exchange, symbol, side, amount)
+            if side == 'sell':
+                if amount < min_amount:
+                    logger.error(f"{symbol}: Amount {amount} < min {min_amount}")
+                    return None
+                if min_cost > 0 and amount * price < min_cost:
+                    logger.error(f"{symbol}: Value {amount * price:.8f} < min {min_cost}")
+                    return None
+
+                amount = self._adjust_precision(symbol, amount)
+                logger.info(f"Selling {amount} {base}")
+
+                if self.use_testnet:
+                    order = {
+                        'id': f'test_{time.time()}',
+                        'status': 'closed',
+                        'filled': float(amount),
+                        'cost': float(amount * price),
+                        'fee': {'cost': float(amount * price * Decimal('0.001'))},
+                    }
+                    logger.info(f"TESTNET: Order placed (ID: {order['id']})")
+                else:
+                    order = self.exchange.create_market_sell_order(symbol, float(amount))
+
             else:
-                print("🚫 Торгівлю скасовано.")
+                if is_quote:
+                    if min_cost > 0 and amount < min_cost:
+                        logger.error(f"{symbol}: Cost {amount} < min {min_cost}")
+                        return None
+                    if price > 0 and amount / price < min_amount:
+                        logger.error(f"{symbol}: Est. amount {amount / price:.8f} < min {min_amount}")
+                        return None
+
+                    logger.info(f"Buying with {amount} {quote}")
+
+                    if self.use_testnet:
+                        est_amount = amount / price if price > 0 else 0
+                        order = {
+                            'id': f'test_{time.time()}',
+                            'status': 'closed',
+                            'filled': float(est_amount),
+                            'cost': float(amount),
+                            'fee': {'cost': float(amount * Decimal('0.001'))},
+                        }
+                        logger.info(f"TESTNET: Order placed (ID: {order['id']})")
+                    else:
+                        order = self.exchange.create_order(symbol, 'market', 'buy', None, None,
+                                                           {'quoteOrderQty': float(amount)})
+                else:
+                    if amount < min_amount:
+                        logger.error(f"{symbol}: Amount {amount} < min {min_amount}")
+                        return None
+                    if min_cost > 0 and amount * price < min_cost:
+                        logger.error(f"{symbol}: Value {amount * price:.8f} < min {min_cost}")
+                        return None
+
+                    amount = self._adjust_precision(symbol, amount)
+                    logger.info(f"Buying {amount} {base}")
+
+                    if self.use_testnet:
+                        order = {
+                            'id': f'test_{time.time()}',
+                            'status': 'closed',
+                            'filled': float(amount),
+                            'cost': float(amount * price),
+                            'fee': {'cost': float(amount * price * Decimal('0.001'))},
+                        }
+                        logger.info(f"TESTNET: Order placed (ID: {order['id']})")
+                    else:
+                        order = self.exchange.create_market_buy_order(symbol, float(amount))
+
+            self.get_balance(force_refresh=True)
+            return order
+
+        except Exception as e:
+            logger.error(f"Order error ({symbol}, {side}): {e}")
+            return None
+
+    def _adjust_precision(self, symbol: str, amount: Decimal) -> Decimal:
+        try:
+            return Decimal(self.exchange.amount_to_precision(symbol, float(amount)))
+        except:
+            return amount
+
+    def find_path(self, from_curr: str, to_curr: str) -> Dict:
+        from_curr, to_curr = from_curr.upper(), to_curr.upper()
+        prices = {}
+        result = {'success': False, 'path': []}
+
+        if from_curr == to_curr:
+            return {'success': True, 'path': [], 'rate': Decimal('1.0')}
+
+        def get_price(symbol):
+            if symbol in prices:
+                return prices[symbol]
+            try:
+                if symbol in self.markets:
+                    price = Decimal(str(self.exchange.fetch_ticker(symbol)['last']))
+                    if price > 0:
+                        prices[symbol] = price
+                        return price
+            except:
+                pass
+            return None
+
+        direct = f"{from_curr}/{to_curr}"
+        price = get_price(direct)
+        if price:
+            return {
+                'success': True,
+                'path': [{'symbol': direct, 'action': 'sell', 'from': from_curr, 'to': to_curr}],
+                'rate': price
+            }
+
+        inverse = f"{to_curr}/{from_curr}"
+        price = get_price(inverse)
+        if price:
+            return {
+                'success': True,
+                'path': [{'symbol': inverse, 'action': 'buy', 'from': from_curr, 'to': to_curr}],
+                'rate': Decimal('1') / price
+            }
+
+        for mid in self.intermediaries:
+            if mid in (from_curr, to_curr):
+                continue
+
+            paths = [
+                {'sym1': f"{from_curr}/{mid}", 'act1': 'sell',
+                 'sym2': f"{to_curr}/{mid}", 'act2': 'sell'},
+
+                {'sym1': f"{from_curr}/{mid}", 'act1': 'sell',
+                 'sym2': f"{mid}/{to_curr}", 'act2': 'buy'},
+
+                {'sym1': f"{mid}/{from_curr}", 'act1': 'buy',
+                 'sym2': f"{mid}/{to_curr}", 'act2': 'buy'}
+            ]
+
+            for path in paths:
+                p1 = get_price(path['sym1'])
+                p2 = get_price(path['sym2'])
+
+                if p1 and p2:
+                    if path['act1'] == 'sell' and path['act2'] == 'sell':
+                        rate = p1 / p2
+                    elif path['act1'] == 'sell' and path['act2'] == 'buy':
+                        rate = p1 * p2
+                    else:
+                        rate = (Decimal('1') / p1) * p2
+
+                    return {
+                        'success': True,
+                        'path': [
+                            {'symbol': path['sym1'], 'action': path['act1'], 'from': from_curr, 'to': mid},
+                            {'symbol': path['sym2'], 'action': path['act2'], 'from': mid, 'to': to_curr}
+                        ],
+                        'rate': rate,
+                        'intermediary': mid
+                    }
+
+        return result
+
+    def convert(self, amount: Decimal, from_curr: str, to_curr: str) -> bool:
+        balance = self.get_balance(from_curr)['free']
+        if balance < amount:
+            logger.error(f"Insufficient {from_curr}. Need: {amount}, Available: {balance}")
+            return False
+
+        path_info = self.find_path(from_curr, to_curr)
+        if not path_info['success']:
+            logger.error(f"No conversion path found: {from_curr} -> {to_curr}")
+            return False
+
+        rate = path_info['rate']
+        est_result = (amount * rate).quantize(Decimal('0.00000001'))
+
+        print("\n--- Conversion Preview ---")
+        print(f"Convert: {amount:.8f} {from_curr} -> ~{est_result:.8f} {to_curr}")
+
+        if 'intermediary' in path_info:
+            print(f"Path: via {path_info['intermediary']}, Rate: ~{rate:.8f}")
+        else:
+            print(f"Path: direct, Rate: ~{rate:.8f}")
+
+        print(f"Available: {balance:.8f} {from_curr}")
+
+        if input("Confirm? (yes/no): ").lower() not in ('yes', 'y'):
+            print("Conversion cancelled")
+            return False
+
+        logger.info(f"Starting conversion: {from_curr} -> {to_curr}")
+
+        if len(path_info['path']) == 1:
+            step = path_info['path'][0]
+            order = self.place_order(
+                step['symbol'],
+                step['action'],
+                amount,
+                is_quote=(step['action'] == 'buy')
+            )
+            return order is not None
+
+        elif len(path_info['path']) == 2:
+            mid = path_info['intermediary']
+            logger.info(f"Two-step conversion via {mid}")
+
+            step1 = path_info['path'][0]
+            order1 = self.place_order(
+                step1['symbol'],
+                step1['action'],
+                amount,
+                is_quote=(step1['action'] == 'buy')
+            )
+
+            if not order1:
+                logger.error("Step 1 failed, aborting conversion")
+                return False
+
+            logger.info("Step 1 complete, waiting for balance update...")
+            time.sleep(2)
+
+            # Step 2 - Updated to use MIN_BALANCE_THRESHOLD
+            mid_balance = self.get_balance(mid, force_refresh=True)['free']
+            if mid_balance <= MIN_BALANCE_THRESHOLD:  # Changed from hardcoded 0.001 to variable
+                logger.error(f"Insufficient {mid} available for step 2. Amount: {mid_balance}, Min required: {MIN_BALANCE_THRESHOLD}")
+                return False
+
+            step2 = path_info['path'][1]
+            order2 = self.place_order(
+                step2['symbol'],
+                step2['action'],
+                mid_balance,
+                is_quote=(step2['action'] == 'buy')
+            )
+
+            return order2 is not None
+
+        return False
+
+    def show_balance(self, min_value: Decimal = Decimal('0.00001')) -> None:
+        """Display account balance"""
+        balance = self.get_balance(force_refresh=True)
+
+        print("\n--- Balance ---")
+        print(f"{'Asset':<8} {'Available':<16} {'In Orders':<16} {'Total':<16}")
+        print("-" * 60)
+
+        # Sort by value
+        currencies = sorted([
+            curr for curr, total in balance.get('total', {}).items()
+            if total > min_value
+        ])
+
+        if not currencies:
+            print("No significant balances found")
+            return
+
+        for curr in currencies:
+            free = balance['free'].get(curr, Decimal('0'))
+            used = balance['used'].get(curr, Decimal('0'))
+            total = balance['total'].get(curr, Decimal('0'))
+            print(f"{curr:<8} {free:<16.8f} {used:<16.8f} {total:<16.8f}")
+
+    def run(self) -> None:
+        print("\n=== Binance Trading Bot ===")
+        if self.use_testnet:
+            print("⚠️ TESTNET MODE ACTIVE ⚠️")
+
+        if not self.connect():
+            sys.exit(1)
+
+        while True:
+            print("\n--- Menu ---")
+            print("1. Convert Currency")
+            print("2. Show Balance")
+            print("3. Exit")
+
+            try:
+                choice = input("Choice (1-3): ").strip()
+
+                if choice == '1':
+                    self.show_balance()
+                    from_c = input("From currency: ").upper().strip()
+                    to_c = input("To currency: ").upper().strip()
+
+                    if not from_c or not to_c or from_c == to_c:
+                        print("Invalid currencies")
+                        continue
+
+                    balance = self.get_balance(from_c)['free']
+                    if balance <= 0:
+                        print(f"No {from_c} available")
+                        continue
+
+                    print(f"Available: {balance:.8f} {from_c}")
+                    amount_input = input(f"Amount to convert (or 'max'): ").strip().lower()
+
+                    amount = balance if amount_input == 'max' else Decimal(amount_input.replace(',', '.'))
+
+                    if amount <= 0 or amount > balance:
+                        print("Invalid amount")
+                        continue
+
+                    if self.convert(amount, from_c, to_c):
+                        print("\n✅ Conversion completed")
+                        time.sleep(2)
+                        self.show_balance()
+                    else:
+                        print("\n❌ Conversion failed")
+
+                elif choice == '2':
+                    self.show_balance()
+                elif choice == '3':
+                    print("Exiting")
+                    break
+                else:
+                    print("Invalid choice")
+            except KeyboardInterrupt:
+                print("\nExiting")
+                break
+            except ValueError:
+                print("Invalid input")
+            except Exception as e:
+                logger.error(f"Error: {e}")
+                print(f"Error: {e}")
 
 
-        elif action == '2':
-            print("\n--- Конвертація (через Маркет Ордери) ---")
-            amount = get_positive_float_input("Кількість для конвертації: ")
-            from_c = input("З якої валюти (напр., BTC): ").upper().strip()
-            to_c = input("В яку валюту (напр., USDT): ").upper().strip()
+def main():
+    bot = BinanceBot(API_KEY, API_SECRET, USE_TESTNET)
+    bot.run()
 
-            rate, path, intermediary = get_approx_conversion_info(exchange, from_c, to_c)
-
-            if rate is not None:
-                approx_result_display = amount * rate
-                print(f"\n   Приблизний розрахунок: {amount:.8f} {from_c} ≈ {approx_result_display:.8f} {to_c}")
-                print(f"   Розрахунковий курс: {rate:.8f}, Шлях: {path}")
-
-                execute_conversion_by_trade(exchange, amount, from_c, to_c, rate, path, intermediary)
-            else:
-                print(f"\n❌ Не вдалося знайти спосіб конвертації {from_c} в {to_c} для розрахунку курсу.")
-
-        elif action == '3':
-            print("\n Всьо")
-            break
 
 if __name__ == "__main__":
-    run_bot()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProgram terminated")
+    except Exception as e:
+        logger.critical(f"Critical error: {e}")
+        print(f"\n❌ Critical error: {e}")
