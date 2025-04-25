@@ -11,15 +11,21 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
                     handlers=[logging.FileHandler("binance_bot.log"), logging.StreamHandler()])
 logger = logging.getLogger("binance_bot")
 
-
-USE_TESTNET = False
 load_dotenv()
 
 API_KEY = os.getenv('BINANCE_API_KEY')
 API_SECRET = os.getenv('BINANCE_API_SECRET')
+USE_TESTNET = os.getenv('USE_TESTNET', 'True').lower() in ('true', 't', '1', 'yes')
+TESTNET_BALANCE = {
+    'BTC': Decimal('1.5'),
+    'ETH': Decimal('20.0'),
+    'BNB': Decimal('50.0'),
+    'USDT': Decimal('10000.0'),
+    'USDC': Decimal('5000.0')
+}
 
-# Minimum balance threshold for conversions
-MIN_BALANCE_THRESHOLD = Decimal('0.001')
+MIN_BALANCE_THRESHOLD = Decimal('0.0000001')
+DUST_FACTOR = Decimal('1')
 
 if not API_KEY or not API_SECRET:
     logger.error("API keys not found in .env file")
@@ -27,10 +33,11 @@ if not API_KEY or not API_SECRET:
 
 
 class BinanceBot:
-    def __init__(self, api_key: str, api_secret: str, use_testnet: bool = False):
+    def __init__(self, api_key: str, api_secret: str, use_testnet: bool = False, testnet_balance: Dict = None):
         self.api_key = api_key
         self.api_secret = api_secret
         self.use_testnet = use_testnet
+        self.testnet_balance = testnet_balance or TESTNET_BALANCE
         self.exchange = None
         self.markets = {}
         self._balance_cache = {}
@@ -38,7 +45,6 @@ class BinanceBot:
         self.intermediaries = ['USDT', 'BUSD', 'BTC', 'ETH', 'BNB']
 
     def connect(self) -> bool:
-        """Initialize connection to Binance API"""
         try:
             self.exchange = ccxt.binance({
                 'apiKey': self.api_key,
@@ -56,7 +62,6 @@ class BinanceBot:
             self.markets = self.exchange.markets
             logger.info(f"Connected! Markets available: {len(self.markets)}")
             return True
-
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             return False
@@ -70,8 +75,7 @@ class BinanceBot:
             try:
                 if self.use_testnet:
                     balance = {
-                        'free': {'BTC': Decimal('1.5'), 'ETH': Decimal('20.0'), 'BNB': Decimal('50.0'),
-                                 'USDT': Decimal('10000.0'), 'USDC': Decimal('5000.0')},
+                        'free': {k: v for k, v in self.testnet_balance.items()},
                         'used': {'USDT': Decimal('500.0'), 'BTC': Decimal('0.1')},
                         'total': {}
                     }
@@ -105,102 +109,163 @@ class BinanceBot:
             }
         return balance
 
+    def get_market_limits(self, symbol: str) -> Dict:
+        """Get trading limits for a specific market"""
+        try:
+            market = self.markets[symbol]
+            return {
+                'min_amount': Decimal(str(market['limits']['amount']['min'])),
+                'min_cost': Decimal(str(market.get('limits', {}).get('cost', {}).get('min', 0))),
+                'amount_precision': Decimal(str(10 ** -market['precision']['amount'])),
+                'price_precision': Decimal(str(10 ** -market['precision']['price']))
+            }
+        except Exception as e:
+            logger.error(f"Failed to get market limits for {symbol}: {e}")
+            return {
+                'min_amount': Decimal('0.00001'),
+                'min_cost': Decimal('1'),
+                'amount_precision': Decimal('0.00000001'),
+                'price_precision': Decimal('0.00000001')
+            }
+
+    def adjust_precision(self, symbol: str, amount: Decimal, is_quote: bool = False) -> Decimal:
+        """Adjust the amount or quote amount to the correct precision for the market"""
+        try:
+            market = self.markets[symbol]
+            precision = market['precision']['price'] if is_quote else market['precision']['amount']
+            step_size = Decimal(f"0.{'0' * (precision - 1)}1")
+            adjusted = (amount // step_size) * step_size
+
+            if is_quote:
+                adjusted_str = self.exchange.price_to_precision(symbol, float(adjusted))
+            else:
+                adjusted_str = self.exchange.amount_to_precision(symbol, float(adjusted))
+
+            return Decimal(adjusted_str)
+        except Exception as e:
+            logger.warning(f"Precision adjustment failed: {e}. Using simple rounding.")
+            try:
+                return Decimal(str(float(amount)))
+            except:
+                return amount
+
     def place_order(self, symbol: str, side: str, amount: Decimal, is_quote: bool = False) -> Optional[Dict]:
         try:
             market = self.markets[symbol]
             base, quote = market['base'], market['quote']
-            min_amount = Decimal(str(market['limits']['amount']['min']))
-            min_cost = Decimal(str(market.get('limits', {}).get('cost', {}).get('min', 0)))
-
+            limits = self.get_market_limits(symbol)
             price = Decimal(str(self.exchange.fetch_ticker(symbol)['last']))
 
+            # Validate amount and price
+            min_amount = limits['min_amount']
+            min_cost = limits['min_cost']
+
             if side == 'sell':
-                if amount < min_amount:
-                    logger.error(f"{symbol}: Amount {amount} < min {min_amount}")
-                    return None
-                if min_cost > 0 and amount * price < min_cost:
-                    logger.error(f"{symbol}: Value {amount * price:.8f} < min {min_cost}")
+                if amount < min_amount or (min_cost > 0 and amount * price < min_cost):
+                    logger.error(f"{symbol}: Amount {amount} or value {amount * price:.8f} below minimum")
                     return None
 
-                amount = self._adjust_precision(symbol, amount)
+                amount = self.adjust_precision(symbol, amount)
                 logger.info(f"Selling {amount} {base}")
 
                 if self.use_testnet:
+                    # Update testnet balance
+                    curr_balance = self.testnet_balance.get(base, Decimal('0'))
+                    if curr_balance < amount:
+                        logger.error(f"Insufficient testnet balance: {curr_balance} {base} < {amount}")
+                        return None
+
+                    self.testnet_balance[base] = curr_balance - amount
+                    if quote in self.testnet_balance:
+                        self.testnet_balance[quote] += amount * price
+                    else:
+                        self.testnet_balance[quote] = amount * price * Decimal('0.999')
+
                     order = {
                         'id': f'test_{time.time()}',
                         'status': 'closed',
                         'filled': float(amount),
                         'cost': float(amount * price),
-                        'fee': {'cost': float(amount * price * Decimal('0.001'))},
+                        'fee': {'cost': float(amount * price * Decimal('0.001'))}
                     }
                     logger.info(f"TESTNET: Order placed (ID: {order['id']})")
                 else:
                     order = self.exchange.create_market_sell_order(symbol, float(amount))
-
-            else:
+            else:  # buy
                 if is_quote:
                     if min_cost > 0 and amount < min_cost:
                         logger.error(f"{symbol}: Cost {amount} < min {min_cost}")
                         return None
-                    if price > 0 and amount / price < min_amount:
-                        logger.error(f"{symbol}: Est. amount {amount / price:.8f} < min {min_amount}")
-                        return None
 
+                    amount = self.adjust_precision(symbol, amount, is_quote=True)
                     logger.info(f"Buying with {amount} {quote}")
 
                     if self.use_testnet:
-                        est_amount = amount / price if price > 0 else 0
+                        curr_balance = self.testnet_balance.get(quote, Decimal('0'))
+                        if curr_balance < amount:
+                            logger.error(f"Insufficient testnet balance: {curr_balance} {quote} < {amount}")
+                            return None
+
+                        est_amount = amount / price * Decimal('0.999') if price > 0 else 0
+                        self.testnet_balance[quote] = curr_balance - amount
+                        if base in self.testnet_balance:
+                            self.testnet_balance[base] += est_amount
+                        else:
+                            self.testnet_balance[base] = est_amount
+
                         order = {
                             'id': f'test_{time.time()}',
                             'status': 'closed',
                             'filled': float(est_amount),
                             'cost': float(amount),
-                            'fee': {'cost': float(amount * Decimal('0.001'))},
+                            'fee': {'cost': float(amount * Decimal('0.001'))}
                         }
                         logger.info(f"TESTNET: Order placed (ID: {order['id']})")
                     else:
                         order = self.exchange.create_order(symbol, 'market', 'buy', None, None,
                                                            {'quoteOrderQty': float(amount)})
                 else:
-                    if amount < min_amount:
-                        logger.error(f"{symbol}: Amount {amount} < min {min_amount}")
-                        return None
-                    if min_cost > 0 and amount * price < min_cost:
-                        logger.error(f"{symbol}: Value {amount * price:.8f} < min {min_cost}")
+                    if amount < min_amount or (min_cost > 0 and amount * price < min_cost):
+                        logger.error(f"{symbol}: Amount {amount} or value {amount * price:.8f} below minimum")
                         return None
 
-                    amount = self._adjust_precision(symbol, amount)
+                    amount = self.adjust_precision(symbol, amount)
                     logger.info(f"Buying {amount} {base}")
 
                     if self.use_testnet:
+                        cost = amount * price
+                        curr_balance = self.testnet_balance.get(quote, Decimal('0'))
+                        if curr_balance < cost:
+                            logger.error(f"Insufficient testnet balance: {curr_balance} {quote} < {cost}")
+                            return None
+
+                        self.testnet_balance[quote] = curr_balance - cost
+                        if base in self.testnet_balance:
+                            self.testnet_balance[base] += amount * Decimal('0.999')  # Simulate 0.1% fee
+                        else:
+                            self.testnet_balance[base] = amount * Decimal('0.999')
+
                         order = {
                             'id': f'test_{time.time()}',
                             'status': 'closed',
                             'filled': float(amount),
-                            'cost': float(amount * price),
-                            'fee': {'cost': float(amount * price * Decimal('0.001'))},
+                            'cost': float(cost),
+                            'fee': {'cost': float(cost * Decimal('0.001'))}
                         }
                         logger.info(f"TESTNET: Order placed (ID: {order['id']})")
                     else:
                         order = self.exchange.create_market_buy_order(symbol, float(amount))
 
-            self.get_balance(force_refresh=True)
+            self._balance_cache = {}  # Invalidate cache
             return order
 
         except Exception as e:
             logger.error(f"Order error ({symbol}, {side}): {e}")
             return None
 
-    def _adjust_precision(self, symbol: str, amount: Decimal) -> Decimal:
-        try:
-            return Decimal(self.exchange.amount_to_precision(symbol, float(amount)))
-        except:
-            return amount
-
     def find_path(self, from_curr: str, to_curr: str) -> Dict:
         from_curr, to_curr = from_curr.upper(), to_curr.upper()
         prices = {}
-        result = {'success': False, 'path': []}
 
         if from_curr == to_curr:
             return {'success': True, 'path': [], 'rate': Decimal('1.0')}
@@ -218,6 +283,7 @@ class BinanceBot:
                 pass
             return None
 
+        # Try direct path
         direct = f"{from_curr}/{to_curr}"
         price = get_price(direct)
         if price:
@@ -227,6 +293,7 @@ class BinanceBot:
                 'rate': price
             }
 
+        # Try inverse path
         inverse = f"{to_curr}/{from_curr}"
         price = get_price(inverse)
         if price:
@@ -236,19 +303,15 @@ class BinanceBot:
                 'rate': Decimal('1') / price
             }
 
+        # Try paths with intermediaries
         for mid in self.intermediaries:
             if mid in (from_curr, to_curr):
                 continue
 
             paths = [
-                {'sym1': f"{from_curr}/{mid}", 'act1': 'sell',
-                 'sym2': f"{to_curr}/{mid}", 'act2': 'sell'},
-
-                {'sym1': f"{from_curr}/{mid}", 'act1': 'sell',
-                 'sym2': f"{mid}/{to_curr}", 'act2': 'buy'},
-
-                {'sym1': f"{mid}/{from_curr}", 'act1': 'buy',
-                 'sym2': f"{mid}/{to_curr}", 'act2': 'buy'}
+                {'sym1': f"{from_curr}/{mid}", 'act1': 'sell', 'sym2': f"{to_curr}/{mid}", 'act2': 'sell'},
+                {'sym1': f"{from_curr}/{mid}", 'act1': 'sell', 'sym2': f"{mid}/{to_curr}", 'act2': 'buy'},
+                {'sym1': f"{mid}/{from_curr}", 'act1': 'buy', 'sym2': f"{mid}/{to_curr}", 'act2': 'buy'}
             ]
 
             for path in paths:
@@ -273,9 +336,10 @@ class BinanceBot:
                         'intermediary': mid
                     }
 
-        return result
+        return {'success': False, 'path': []}
 
-    def convert(self, amount: Decimal, from_curr: str, to_curr: str) -> bool:
+    def convert(self, amount: Decimal, from_curr: str, to_curr: str, sweep_mode: bool = False) -> bool:
+        """Convert currency with improved handling to avoid dust"""
         balance = self.get_balance(from_curr)['free']
         if balance < amount:
             logger.error(f"Insufficient {from_curr}. Need: {amount}, Available: {balance}")
@@ -291,42 +355,30 @@ class BinanceBot:
 
         print("\n--- Conversion Preview ---")
         print(f"Convert: {amount:.8f} {from_curr} -> ~{est_result:.8f} {to_curr}")
-
-        if 'intermediary' in path_info:
-            print(f"Path: via {path_info['intermediary']}, Rate: ~{rate:.8f}")
-        else:
-            print(f"Path: direct, Rate: ~{rate:.8f}")
-
+        print(
+            f"Path: {'via ' + path_info.get('intermediary', '') if 'intermediary' in path_info else 'direct'}, Rate: ~{rate:.8f}")
         print(f"Available: {balance:.8f} {from_curr}")
 
-        if input("Confirm? (yes/no): ").lower() not in ('yes', 'y'):
+        if not sweep_mode and input("Confirm? (yes/no): ").lower() not in ('yes', 'y'):
             print("Conversion cancelled")
             return False
 
         logger.info(f"Starting conversion: {from_curr} -> {to_curr}")
 
+        # Single step conversion
         if len(path_info['path']) == 1:
             step = path_info['path'][0]
-            order = self.place_order(
-                step['symbol'],
-                step['action'],
-                amount,
-                is_quote=(step['action'] == 'buy')
-            )
+            order = self.place_order(step['symbol'], step['action'], amount, is_quote=(step['action'] == 'buy'))
             return order is not None
 
+        # Two-step conversion via intermediary
         elif len(path_info['path']) == 2:
             mid = path_info['intermediary']
             logger.info(f"Two-step conversion via {mid}")
 
+            # First step
             step1 = path_info['path'][0]
-            order1 = self.place_order(
-                step1['symbol'],
-                step1['action'],
-                amount,
-                is_quote=(step1['action'] == 'buy')
-            )
-
+            order1 = self.place_order(step1['symbol'], step1['action'], amount, is_quote=(step1['action'] == 'buy'))
             if not order1:
                 logger.error("Step 1 failed, aborting conversion")
                 return False
@@ -334,20 +386,24 @@ class BinanceBot:
             logger.info("Step 1 complete, waiting for balance update...")
             time.sleep(2)
 
-            # Step 2 - Updated to use MIN_BALANCE_THRESHOLD
+            # Second step
             mid_balance = self.get_balance(mid, force_refresh=True)['free']
-            if mid_balance <= MIN_BALANCE_THRESHOLD:  # Changed from hardcoded 0.001 to variable
-                logger.error(f"Insufficient {mid} available for step 2. Amount: {mid_balance}, Min required: {MIN_BALANCE_THRESHOLD}")
+            if mid_balance <= MIN_BALANCE_THRESHOLD:
+                logger.error(f"Insufficient {mid} for step 2: {mid_balance}")
                 return False
 
             step2 = path_info['path'][1]
-            order2 = self.place_order(
-                step2['symbol'],
-                step2['action'],
-                mid_balance,
-                is_quote=(step2['action'] == 'buy')
-            )
+            limits = self.get_market_limits(step2['symbol'])
 
+            # Adjust amount to avoid dust
+            adjusted_amount = mid_balance * DUST_FACTOR
+            if (step2['action'] == 'buy' and adjusted_amount < limits['min_cost']) or \
+                    (step2['action'] == 'sell' and adjusted_amount < limits['min_amount']):
+                adjusted_amount = mid_balance
+
+            logger.info(f"Step 2: Using {adjusted_amount} of {mid_balance} {mid}")
+            order2 = self.place_order(step2['symbol'], step2['action'], adjusted_amount,
+                                      is_quote=(step2['action'] == 'buy'))
             return order2 is not None
 
         return False
@@ -360,11 +416,8 @@ class BinanceBot:
         print(f"{'Asset':<8} {'Available':<16} {'In Orders':<16} {'Total':<16}")
         print("-" * 60)
 
-        # Sort by value
-        currencies = sorted([
-            curr for curr, total in balance.get('total', {}).items()
-            if total > min_value
-        ])
+        # Sort currencies by value
+        currencies = sorted([curr for curr, total in balance.get('total', {}).items() if total > min_value])
 
         if not currencies:
             print("No significant balances found")
@@ -375,6 +428,90 @@ class BinanceBot:
             used = balance['used'].get(curr, Decimal('0'))
             total = balance['total'].get(curr, Decimal('0'))
             print(f"{curr:<8} {free:<16.8f} {used:<16.8f} {total:<16.8f}")
+
+        # Show dust amounts
+        dust_currencies = sorted([curr for curr, total in balance.get('total', {}).items()
+                                  if total > Decimal('0') and total <= min_value])
+
+        if dust_currencies:
+            print("\n--- Dust Balances ---")
+            for curr in dust_currencies:
+                free = balance['free'].get(curr, Decimal('0'))
+                print(f"{curr:<8} {free:<16.8f}")
+
+    def sweep_dust(self, to_currency: str = 'BTC') -> None:
+        """Try to convert very small balances to a target currency"""
+        balance = self.get_balance(force_refresh=True)
+        dust_currencies = [curr for curr, total in balance.get('free', {}).items()
+                           if total > Decimal('0.000001') and total < Decimal('0.01') and curr != to_currency]
+
+        if not dust_currencies:
+            print("No dust balances found to sweep")
+            return
+
+        print(f"\n--- Sweeping Dust to {to_currency} ---")
+        print(f"Found {len(dust_currencies)} dust balances: {', '.join(dust_currencies)}")
+
+        for curr in dust_currencies:
+            free = balance['free'].get(curr, Decimal('0'))
+            if free <= Decimal('0'):
+                continue
+
+            print(f"\nAttempting to sweep {free:.8f} {curr} to {to_currency}")
+            result = self.convert(free, curr, to_currency, sweep_mode=True)
+            print(f"{'✅ Swept' if result else '❌ Failed to sweep'} {curr} to {to_currency}")
+
+        print("\nDust sweep complete")
+
+    def modify_testnet_balance(self) -> None:
+        """Modify testnet balance (only in testnet mode)"""
+        if not self.use_testnet:
+            print("This function is only available in testnet mode")
+            return
+
+        print("\n--- Modify Testnet Balance ---")
+        print("Current balances:")
+        for curr, amount in self.testnet_balance.items():
+            print(f"{curr}: {amount}")
+
+        print("\nOptions:")
+        print("1. Add currency")
+        print("2. Modify existing currency")
+        print("3. Remove currency")
+        print("4. Back to main menu")
+
+        choice = input("Choice (1-4): ").strip()
+
+        if choice == '1':
+            curr = input("Currency symbol: ").upper().strip()
+            try:
+                amount = Decimal(input("Amount: ").strip().replace(',', '.'))
+                self.testnet_balance[curr] = amount
+                print(f"Added {amount} {curr} to testnet balance")
+            except:
+                print("Invalid amount")
+
+        elif choice == '2':
+            curr = input("Currency to modify: ").upper().strip()
+            if curr in self.testnet_balance:
+                try:
+                    amount = Decimal(input("New amount: ").strip().replace(',', '.'))
+                    self.testnet_balance[curr] = amount
+                    print(f"Updated {curr} balance to {amount}")
+                except:
+                    print("Invalid amount")
+            else:
+                print(f"Currency {curr} not found in testnet balance")
+
+        elif choice == '3':
+            curr = input("Currency to remove: ").upper().strip()
+            if curr in self.testnet_balance:
+                del self.testnet_balance[curr]
+                print(f"Removed {curr} from testnet balance")
+            else:
+                print(f"Currency {curr} not found in testnet balance")
+
+        self._balance_cache = {}  # Invalidate balance cache
 
     def run(self) -> None:
         print("\n=== Binance Trading Bot ===")
@@ -388,10 +525,15 @@ class BinanceBot:
             print("\n--- Menu ---")
             print("1. Convert Currency")
             print("2. Show Balance")
-            print("3. Exit")
+            print("3. Sweep Dust")
+            if self.use_testnet:
+                print("4. Modify Testnet Balance")
+                print("5. Exit")
+            else:
+                print("4. Exit")
 
             try:
-                choice = input("Choice (1-3): ").strip()
+                choice = input(f"Choice (1-{'5' if self.use_testnet else '4'}): ").strip()
 
                 if choice == '1':
                     self.show_balance()
@@ -409,7 +551,6 @@ class BinanceBot:
 
                     print(f"Available: {balance:.8f} {from_c}")
                     amount_input = input(f"Amount to convert (or 'max'): ").strip().lower()
-
                     amount = balance if amount_input == 'max' else Decimal(amount_input.replace(',', '.'))
 
                     if amount <= 0 or amount > balance:
@@ -425,11 +566,21 @@ class BinanceBot:
 
                 elif choice == '2':
                     self.show_balance()
+
                 elif choice == '3':
+                    to_c = input("Convert dust to which currency? [BTC]: ").upper().strip() or 'BTC'
+                    self.sweep_dust(to_c)
+
+                elif choice == '4' and self.use_testnet:
+                    self.modify_testnet_balance()
+
+                elif (choice == '4' and not self.use_testnet) or (choice == '5' and self.use_testnet):
                     print("Exiting")
                     break
+
                 else:
                     print("Invalid choice")
+
             except KeyboardInterrupt:
                 print("\nExiting")
                 break
@@ -441,7 +592,15 @@ class BinanceBot:
 
 
 def main():
-    bot = BinanceBot(API_KEY, API_SECRET, USE_TESTNET)
+    # Allow command-line parameter to override .env setting
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ('--testnet', '-t'):
+        use_testnet = True
+    elif len(sys.argv) > 1 and sys.argv[1].lower() in ('--live', '-l'):
+        use_testnet = False
+    else:
+        use_testnet = USE_TESTNET
+
+    bot = BinanceBot(API_KEY, API_SECRET, use_testnet)
     bot.run()
 
 
