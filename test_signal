@@ -110,7 +110,6 @@ class BinanceBot:
         return balance
 
     def get_market_limits(self, symbol: str) -> Dict:
-        """Get trading limits for a specific market"""
         try:
             market = self.markets[symbol]
             return {
@@ -129,7 +128,6 @@ class BinanceBot:
             }
 
     def adjust_precision(self, symbol: str, amount: Decimal, is_quote: bool = False) -> Decimal:
-        """Adjust the amount or quote amount to the correct precision for the market"""
         try:
             market = self.markets[symbol]
             precision = market['precision']['price'] if is_quote else market['precision']['amount']
@@ -149,6 +147,12 @@ class BinanceBot:
             except:
                 return amount
 
+
+    def safe_decimal_compare(self, a: Decimal, b: Decimal, digits: int = 8) -> bool:
+        return a.quantize(Decimal('0.' + '0' * (digits - 1) + '1')) >= b.quantize(Decimal('0.' + '0' * (digits - 1) + '1'))
+
+
+
     def place_order(self, symbol: str, side: str, amount: Decimal, is_quote: bool = False) -> Optional[Dict]:
         try:
             market = self.markets[symbol]
@@ -156,7 +160,6 @@ class BinanceBot:
             limits = self.get_market_limits(symbol)
             price = Decimal(str(self.exchange.fetch_ticker(symbol)['last']))
 
-            # Validate amount and price
             min_amount = limits['min_amount']
             min_cost = limits['min_cost']
 
@@ -169,9 +172,8 @@ class BinanceBot:
                 logger.info(f"Selling {amount} {base}")
 
                 if self.use_testnet:
-                    # Update testnet balance
                     curr_balance = self.testnet_balance.get(base, Decimal('0'))
-                    if curr_balance < amount:
+                    if not self.safe_decimal_compare(curr_balance, amount):
                         logger.error(f"Insufficient testnet balance: {curr_balance} {base} < {amount}")
                         return None
 
@@ -191,7 +193,7 @@ class BinanceBot:
                     logger.info(f"TESTNET: Order placed (ID: {order['id']})")
                 else:
                     order = self.exchange.create_market_sell_order(symbol, float(amount))
-            else:  # buy
+            else:
                 if is_quote:
                     if min_cost > 0 and amount < min_cost:
                         logger.error(f"{symbol}: Cost {amount} < min {min_cost}")
@@ -202,7 +204,7 @@ class BinanceBot:
 
                     if self.use_testnet:
                         curr_balance = self.testnet_balance.get(quote, Decimal('0'))
-                        if curr_balance < amount:
+                        if not self.safe_decimal_compare(curr_balance, amount):
                             logger.error(f"Insufficient testnet balance: {curr_balance} {quote} < {amount}")
                             return None
 
@@ -235,7 +237,7 @@ class BinanceBot:
                     if self.use_testnet:
                         cost = amount * price
                         curr_balance = self.testnet_balance.get(quote, Decimal('0'))
-                        if curr_balance < cost:
+                        if not self.safe_decimal_compare(curr_balance, cost):
                             logger.error(f"Insufficient testnet balance: {curr_balance} {quote} < {cost}")
                             return None
 
