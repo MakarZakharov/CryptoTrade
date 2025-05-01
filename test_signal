@@ -147,11 +147,9 @@ class BinanceBot:
             except:
                 return amount
 
-
     def safe_decimal_compare(self, a: Decimal, b: Decimal, digits: int = 8) -> bool:
-        return a.quantize(Decimal('0.' + '0' * (digits - 1) + '1')) >= b.quantize(Decimal('0.' + '0' * (digits - 1) + '1'))
-
-
+        return a.quantize(Decimal('0.' + '0' * (digits - 1) + '1')) >= b.quantize(
+            Decimal('0.' + '0' * (digits - 1) + '1'))
 
     def place_order(self, symbol: str, side: str, amount: Decimal, is_quote: bool = False) -> Optional[Dict]:
         try:
@@ -258,7 +256,7 @@ class BinanceBot:
                     else:
                         order = self.exchange.create_market_buy_order(symbol, float(amount))
 
-            self._balance_cache = {}  # Invalidate cache
+            self._balance_cache = {}
             return order
 
         except Exception as e:
@@ -285,7 +283,6 @@ class BinanceBot:
                 pass
             return None
 
-        # Try direct path
         direct = f"{from_curr}/{to_curr}"
         price = get_price(direct)
         if price:
@@ -295,7 +292,6 @@ class BinanceBot:
                 'rate': price
             }
 
-        # Try inverse path
         inverse = f"{to_curr}/{from_curr}"
         price = get_price(inverse)
         if price:
@@ -305,7 +301,6 @@ class BinanceBot:
                 'rate': Decimal('1') / price
             }
 
-        # Try paths with intermediaries
         for mid in self.intermediaries:
             if mid in (from_curr, to_curr):
                 continue
@@ -341,7 +336,6 @@ class BinanceBot:
         return {'success': False, 'path': []}
 
     def convert(self, amount: Decimal, from_curr: str, to_curr: str, sweep_mode: bool = False) -> bool:
-        """Convert currency with improved handling to avoid dust"""
         balance = self.get_balance(from_curr)['free']
         if balance < amount:
             logger.error(f"Insufficient {from_curr}. Need: {amount}, Available: {balance}")
@@ -367,18 +361,15 @@ class BinanceBot:
 
         logger.info(f"Starting conversion: {from_curr} -> {to_curr}")
 
-        # Single step conversion
         if len(path_info['path']) == 1:
             step = path_info['path'][0]
             order = self.place_order(step['symbol'], step['action'], amount, is_quote=(step['action'] == 'buy'))
             return order is not None
 
-        # Two-step conversion via intermediary
         elif len(path_info['path']) == 2:
             mid = path_info['intermediary']
             logger.info(f"Two-step conversion via {mid}")
 
-            # First step
             step1 = path_info['path'][0]
             order1 = self.place_order(step1['symbol'], step1['action'], amount, is_quote=(step1['action'] == 'buy'))
             if not order1:
@@ -388,7 +379,6 @@ class BinanceBot:
             logger.info("Step 1 complete, waiting for balance update...")
             time.sleep(2)
 
-            # Second step
             mid_balance = self.get_balance(mid, force_refresh=True)['free']
             if mid_balance <= MIN_BALANCE_THRESHOLD:
                 logger.error(f"Insufficient {mid} for step 2: {mid_balance}")
@@ -397,7 +387,6 @@ class BinanceBot:
             step2 = path_info['path'][1]
             limits = self.get_market_limits(step2['symbol'])
 
-            # Adjust amount to avoid dust
             adjusted_amount = mid_balance * DUST_FACTOR
             if (step2['action'] == 'buy' and adjusted_amount < limits['min_cost']) or \
                     (step2['action'] == 'sell' and adjusted_amount < limits['min_amount']):
@@ -411,14 +400,12 @@ class BinanceBot:
         return False
 
     def show_balance(self, min_value: Decimal = Decimal('0.00001')) -> None:
-        """Display account balance"""
         balance = self.get_balance(force_refresh=True)
 
         print("\n--- Balance ---")
         print(f"{'Asset':<8} {'Available':<16} {'In Orders':<16} {'Total':<16}")
         print("-" * 60)
 
-        # Sort currencies by value
         currencies = sorted([curr for curr, total in balance.get('total', {}).items() if total > min_value])
 
         if not currencies:
@@ -431,7 +418,6 @@ class BinanceBot:
             total = balance['total'].get(curr, Decimal('0'))
             print(f"{curr:<8} {free:<16.8f} {used:<16.8f} {total:<16.8f}")
 
-        # Show dust amounts
         dust_currencies = sorted([curr for curr, total in balance.get('total', {}).items()
                                   if total > Decimal('0') and total <= min_value])
 
@@ -466,7 +452,6 @@ class BinanceBot:
         print("\nDust sweep complete")
 
     def modify_testnet_balance(self) -> None:
-        """Modify testnet balance (only in testnet mode)"""
         if not self.use_testnet:
             print("This function is only available in testnet mode")
             return
@@ -513,7 +498,7 @@ class BinanceBot:
             else:
                 print(f"Currency {curr} not found in testnet balance")
 
-        self._balance_cache = {}  # Invalidate balance cache
+        self._balance_cache = {} 
 
     def run(self) -> None:
         print("\n=== Binance Trading Bot ===")
@@ -594,7 +579,6 @@ class BinanceBot:
 
 
 def main():
-    # Allow command-line parameter to override .env setting
     if len(sys.argv) > 1 and sys.argv[1].lower() in ('--testnet', '-t'):
         use_testnet = True
     elif len(sys.argv) > 1 and sys.argv[1].lower() in ('--live', '-l'):
