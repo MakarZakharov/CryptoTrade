@@ -111,7 +111,7 @@ class BinanceBot:
     def get_market_info(self, symbol: str) -> Dict:
         try:
             market = self.markets[symbol]
-            min_notional = Decimal('0.001') 
+            min_notional = Decimal('0.001')
 
             for filter_item in market.get('info', {}).get('filters', []):
                 if filter_item.get('filterType') == 'MIN_NOTIONAL':
@@ -211,7 +211,7 @@ class BinanceBot:
                 if side == 'sell':
                     if self.try_micro_conversion(base, quote, amount):
                         return {'id': 'micro-convert', 'status': 'closed'}
-                else: 
+                else:
                     if self.try_micro_conversion(quote, base, amount * price):
                         return {'id': 'micro-convert', 'status': 'closed'}
 
@@ -221,8 +221,8 @@ class BinanceBot:
                     if base in self.testnet_balance:
                         self.testnet_balance[base] -= amount
                     if quote in self.testnet_balance:
-                        self.testnet_balance[quote] += amount * price * Decimal('0.999') 
-                else: 
+                        self.testnet_balance[quote] += amount * price * Decimal('0.999')
+                else:
                     cost = amount * price if not is_quote else amount
                     if quote in self.testnet_balance:
                         self.testnet_balance[quote] -= cost
