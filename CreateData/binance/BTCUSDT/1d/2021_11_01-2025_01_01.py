@@ -56,7 +56,7 @@ def plot_candles(df):
     df_plot = df.copy()
     df_plot.index = pd.to_datetime(df_plot["timestamp"])
     df_plot = df_plot[["open", "high", "low", "close", "volume"]]
-    mpf.plot(df_plot, type="candle", style="charles", volume=True, title="BTCUSDT 1D: 2021–2025", ylabel="Цена", ylabel_lower="Объем")
+    mpf.plot(df_plot, type="candle", style="charles", volume=True, title="BTCUSDT 1D: 01.11.2021–01.01.2025", ylabel="Цена", ylabel_lower="Объем")
 
 def save_and_show(symbol, interval, start_date, end_date, filename):
     print("Загружаем данные...")
