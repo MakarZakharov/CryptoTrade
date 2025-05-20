@@ -1,5 +1,5 @@
 import pandas as pd
-from CryptoTrade.strategies.TestStrategies.first_strategy import sma_crossover
+from CryptoTrade.TestStrategies.first_strategy import sma_crossover
 
 
 def simple_backtest(df, strategy_func, **kwargs):
