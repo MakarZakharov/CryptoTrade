@@ -1,6 +1,4 @@
-import backtrader as bt
-import os
-import sys
+
 
 from CryptoTrade.strategies.TestStrategies.first_strategy import SmaCrossStrategy
 
