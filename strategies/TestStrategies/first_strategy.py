@@ -1,14 +1,17 @@
-import pandas as pd
+import backtrader as bt
 
-def sma_crossover(df, fast_period=10, slow_period=50):
-    """
-    SMA crossover стратегия.
-    Возвращает DataFrame с колонкой 'signal': 1 (buy), -1 (sell), 0 (hold)
-    """
-    df = df.copy()
-    df['SMA_fast'] = df['close'].rolling(window=fast_period).mean()
-    df['SMA_slow'] = df['close'].rolling(window=slow_period).mean()
-    df['signal'] = 0
-    df.loc[df['SMA_fast'] > df['SMA_slow'], 'signal'] = 1
-    df.loc[df['SMA_fast'] < df['SMA_slow'], 'signal'] = -1
-    return df
+class SmaCrossStrategy(bt.Strategy):
+    params = (('fast_period', 10), ('slow_period', 50))
+
+    def __init__(self):
+        self.sma_fast = bt.indicators.SimpleMovingAverage(self.datas[0], period=self.params.fast_period)
+        self.sma_slow = bt.indicators.SimpleMovingAverage(self.datas[0], period=self.params.slow_period)
+        self.crossover = bt.indicators.CrossOver(self.sma_fast, self.sma_slow)
+
+    def next(self):
+        if not self.position:
+            if self.crossover > 0:
+                self.buy()
+        else:
+            if self.crossover < 0:
+                self.sell()
