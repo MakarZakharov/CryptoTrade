@@ -9,7 +9,7 @@ from typing import Dict, Optional, List
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[logging.FileHandler("mini_binance.log"), logging.StreamHandler()])
+
 logger = logging.getLogger("mini_binance")
 
 load_dotenv()
