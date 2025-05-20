@@ -1,5 +1,5 @@
 
-
+import backtrader as bt
 from CryptoTrade.strategies.TestStrategies.first_strategy import SmaCrossStrategy
 
 def run_backtest(strategy, datafile, cash=1000, fast_period=10, slow_period=50):
@@ -20,4 +20,4 @@ def run_backtest(strategy, datafile, cash=1000, fast_period=10, slow_period=50):
     cerebro.plot()
 
 if __name__ == "__main__":
-    run_backtest(SmaCrossStrategy, '../../data/your_file.csv', fast_period=10, slow_period=50)
+    run_backtest(SmaCrossStrategy, 'CryptoTrade/data/binance/BTCUSDT/1d/2018_01_01-2025_01_01.csv', fast_period=10, slow_period=50)
