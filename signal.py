@@ -4,12 +4,12 @@ import sys
 from dotenv import load_dotenv
 import time
 import logging
-from decimal import Decimal
-from typing import Dict, Optional, List
+from decimal import Decimal, ROUND_DOWN
+from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-
+                    handlers=[logging.FileHandler("mini_binance.log"), logging.StreamHandler()])
 logger = logging.getLogger("mini_binance")
 
 load_dotenv()
@@ -19,6 +19,50 @@ USE_TESTNET = os.getenv('USE_TESTNET', 'True').lower() in ('true', 't', '1', 'ye
 
 MICRO_NOTIONAL_THRESHOLD = Decimal('0.0001')
 DUST_THRESHOLD = Decimal('0.00001')
+
+
+def get_max_amount(balance: Decimal, market_info: Dict, is_sell: bool = True) -> Decimal:
+    """
+    Gets the maximum available amount of a token for conversion that ensures no dust remains
+
+    Args:
+        balance: Available balance of the currency
+        market_info: Dictionary containing market information (precision, min amounts)
+        is_sell: True if selling base currency, False if buying with quote currency
+
+    Returns:
+        Maximum amount that can be used for the conversion
+    """
+    if balance <= Decimal('0'):
+        return Decimal('0')
+
+    # Get market constraints
+    min_amount = market_info.get('min_amount', Decimal('0'))
+    min_notional = market_info.get('min_notional', Decimal('0.001'))
+    amount_precision = market_info.get('amount_precision', 8)
+    price = market_info.get('price', Decimal('1'))
+
+    # Adjust amount based on precision
+    quantize_str = '0.' + '0' * (amount_precision - 1) + '1'
+    max_amount = balance.quantize(Decimal(quantize_str), rounding=ROUND_DOWN)
+
+    # Check minimum requirements
+    if is_sell:
+        # Selling base currency
+        if max_amount < min_amount:
+            return Decimal('0')
+        if max_amount * price < min_notional:
+            return Decimal('0')
+    else:
+        # Buying with quote currency - calculate how much base we can get
+        max_base_amount = (max_amount / price).quantize(Decimal(quantize_str), rounding=ROUND_DOWN)
+        if max_base_amount < min_amount:
+            return Decimal('0')
+        if max_amount < min_notional:
+            return Decimal('0')
+        max_amount = max_base_amount
+
+    return max_amount
 
 
 class BinanceBot:
@@ -41,6 +85,7 @@ class BinanceBot:
         }
 
     def connect(self) -> bool:
+        """Connect to Binance API"""
         try:
             self.exchange = ccxt.binance({
                 'apiKey': self.api_key,
@@ -66,6 +111,7 @@ class BinanceBot:
             return False
 
     def get_balance(self, currency: str = None, force_refresh: bool = False) -> Dict:
+        """Get account balance for a specific or all currencies"""
         current_time = time.time()
 
         if not force_refresh and current_time - self._balance_time < 30 and self._balance_cache:
@@ -109,9 +155,11 @@ class BinanceBot:
         return balance
 
     def get_market_info(self, symbol: str) -> Dict:
+        """Get detailed market information for a symbol"""
         try:
             market = self.markets[symbol]
             min_notional = Decimal('0.001')
+            price = Decimal(str(self.exchange.fetch_ticker(symbol)['last']))
 
             for filter_item in market.get('info', {}).get('filters', []):
                 if filter_item.get('filterType') == 'MIN_NOTIONAL':
@@ -125,13 +173,15 @@ class BinanceBot:
                 'amount_precision': market['precision']['amount'],
                 'price_precision': market['precision']['price'],
                 'base': market['base'],
-                'quote': market['quote']
+                'quote': market['quote'],
+                'price': price
             }
         except Exception as e:
             logger.error(f"Failed to get market info for {symbol}: {e}")
             return None
 
     def find_direct_path(self, from_curr: str, to_curr: str) -> Dict:
+        """Find the best path for currency conversion"""
         from_curr, to_curr = from_curr.upper(), to_curr.upper()
 
         if from_curr == to_curr:
@@ -157,6 +207,7 @@ class BinanceBot:
                     'rate': Decimal('1') / Decimal(str(ticker['last']))
                 }
 
+            # Try with intermediary
             for intermediary in self.intermediaries:
                 if intermediary == from_curr or intermediary == to_curr:
                     continue
@@ -184,12 +235,13 @@ class BinanceBot:
             return {'success': False, 'path': []}
 
     def place_micro_order(self, symbol: str, side: str, amount: Decimal, is_quote: bool = False) -> Optional[Dict]:
+        """Place a market order with special handling for micro amounts"""
         try:
             market_info = self.get_market_info(symbol)
             if not market_info:
                 return None
 
-            price = Decimal(str(self.exchange.fetch_ticker(symbol)['last']))
+            price = market_info['price']
             base, quote = market_info['base'], market_info['quote']
 
             is_micro = False
@@ -240,7 +292,7 @@ class BinanceBot:
                 else:
                     order = self.exchange.create_market_buy_order(symbol, float(amount), order_options)
 
-            self._balance_cache = {}
+            self._balance_cache = {}  # Invalidate cache after order
             return order
 
         except Exception as e:
@@ -252,6 +304,7 @@ class BinanceBot:
         try:
             logger.info(f"Attempting micro conversion: {from_curr}->{to_curr} amount:{amount}")
 
+            # Try convert API
             try:
                 result = self.exchange.sapi_post_convert_trade_order({
                     'fromAsset': from_curr,
@@ -264,6 +317,7 @@ class BinanceBot:
             except Exception as e:
                 logger.warning(f"Convert API failed: {e}")
 
+            # Try dust conversion (only to BNB)
             if to_curr == 'BNB':
                 try:
                     result = self.exchange.sapi_post_asset_dust({'asset': [from_curr]})
@@ -273,6 +327,7 @@ class BinanceBot:
                 except Exception as e:
                     logger.warning(f"Dust conversion failed: {e}")
 
+            # Try small assets exchange
             try:
                 result = self.exchange.sapi_post_asset_convert_transfer({
                     'fromAsset': from_curr,
@@ -291,29 +346,51 @@ class BinanceBot:
             logger.error(f"Micro conversion error: {e}")
             return False
 
-    def convert(self, amount: Decimal, from_curr: str, to_curr: str) -> bool:
-        """Convert currency with special handling for microtrades"""
+    def convert(self, from_curr: str, to_curr: str, amount: Optional[Decimal] = None) -> bool:
+        """
+        Convert currency with special handling for microtrades
+        If amount is None, the maximum available amount will be used
+        """
         from_curr = from_curr.upper()
         to_curr = to_curr.upper()
 
+        # Get balance
         balance = self.get_balance(from_curr)['free']
-        if balance < amount:
-            logger.error(f"Insufficient {from_curr}. Need: {amount}, Available: {balance}")
+        if balance <= 0:
+            logger.error(f"No available {from_curr} balance")
             return False
 
-        is_micro = amount < MICRO_NOTIONAL_THRESHOLD
-        if is_micro:
-            logger.info(f"Micro trade detected: {amount} {from_curr}")
-
+        # Find conversion path
         path_info = self.find_direct_path(from_curr, to_curr)
         if not path_info['success']:
             logger.error(f"No conversion path found: {from_curr} -> {to_curr}")
+            return False
+
+        # Get market info for the first step
+        market_info = {}
+        if path_info['path']:
+            symbol = path_info['path'][0]['symbol']
+            market_info = self.get_market_info(symbol) or {}
+            market_info['price'] = path_info['rate']
+
+        # Calculate max amount if 'max' was selected
+        if amount is None:
+            is_sell = path_info['path'][0]['action'] == 'sell' if path_info['path'] else True
+            amount = get_max_amount(balance, market_info, is_sell)
+            if amount <= 0:
+                logger.error(f"Calculated max amount is zero (constraints not met)")
+                return False
+
+        # Validate requested amount
+        if amount > balance:
+            logger.error(f"Insufficient {from_curr}. Need: {amount}, Available: {balance}")
             return False
 
         rate = path_info['rate']
         est_result = amount * rate
         print(f"\nConvert {amount:.8f} {from_curr} -> ~{est_result:.8f} {to_curr}")
 
+        # Record conversion for history
         conversion_record = {
             'timestamp': datetime.now().strftime('%H:%M:%S'),
             'from_currency': from_curr,
@@ -323,9 +400,12 @@ class BinanceBot:
             'rate': rate
         }
 
+        # Process direct conversion
         success = False
         if len(path_info['path']) == 1:
             step = path_info['path'][0]
+            is_micro = amount < MICRO_NOTIONAL_THRESHOLD
+
             if is_micro and not self.use_testnet:
                 if self.try_micro_conversion(from_curr, to_curr, amount):
                     print("✅ Micro conversion successful")
@@ -336,6 +416,7 @@ class BinanceBot:
                                                is_quote=(step['action'] == 'buy'))
                 success = order is not None
 
+        # Process two-step conversion via intermediary
         elif len(path_info['path']) == 2:
             mid = path_info['intermediary']
             logger.info(f"Two-step conversion via {mid}")
@@ -347,7 +428,7 @@ class BinanceBot:
                 logger.error("Step 1 failed")
                 return False
 
-            time.sleep(2)
+            time.sleep(2)  # Wait for order to settle
             mid_balance = self.get_balance(mid, force_refresh=True)['free']
 
             step2 = path_info['path'][1]
@@ -355,6 +436,7 @@ class BinanceBot:
                                             is_quote=(step2['action'] == 'buy'))
             success = order2 is not None
 
+        # Update conversion history
         if success:
             if len(self.conversion_history) >= 5:
                 self.conversion_history.pop(0)
@@ -363,6 +445,7 @@ class BinanceBot:
         return success
 
     def show_balance(self, min_value: Decimal = DUST_THRESHOLD) -> None:
+        """Display account balance with dust separation"""
         balance = self.get_balance(force_refresh=True)
         print("\n--- Balance ---")
 
@@ -414,14 +497,26 @@ class BinanceBot:
 
                     print(f"Available: {balance:.8f} {from_c}")
                     amount_input = input(f"Amount to convert (or 'max'): ").strip().lower()
-                    amount = balance if amount_input == 'max' else Decimal(amount_input.replace(',', '.'))
 
-                    if self.convert(amount, from_c, to_c):
-                        print("✅ Conversion complete")
-                        time.sleep(1)
-                        self.show_balance()
+                    # Use max amount if requested
+                    if amount_input == 'max':
+                        if self.convert(from_c, to_c):
+                            print("✅ Conversion complete")
+                            time.sleep(1)
+                            self.show_balance()
+                        else:
+                            print("❌ Conversion failed")
                     else:
-                        print("❌ Conversion failed")
+                        try:
+                            amount = Decimal(amount_input.replace(',', '.'))
+                            if self.convert(from_c, to_c, amount):
+                                print("✅ Conversion complete")
+                                time.sleep(1)
+                                self.show_balance()
+                            else:
+                                print("❌ Conversion failed")
+                        except Exception as e:
+                            print(f"Invalid amount: {e}")
 
                 elif choice == '2':
                     self.show_balance()
