@@ -1,37 +1,25 @@
-import pandas as pd
-from CryptoTrade.strategies.TestStrategies.first_strategy import sma_crossover
+import backtrader as bt
+import os
+import sys
 
+from CryptoTrade.strategies.TestStrategies.first_strategy import SmaCrossStrategy
 
-def simple_backtest(df, strategy_func, **kwargs):
-    """
-    df — DataFrame с колонкой 'close'
-    strategy_func — функция-стратегия (например, sma_crossover)
-    kwargs — параметры стратегии
-    """
-    # Получаем DataFrame с сигналами
-    df_signals = strategy_func(df, **kwargs)
-    capital = 1000
-    position = 0
-    buy_price = 0
+def run_backtest(strategy, datafile, cash=1000, fast_period=10, slow_period=50):
+    cerebro = bt.Cerebro()
+    cerebro.addstrategy(strategy, fast_period=fast_period, slow_period=slow_period)
 
-    # Бэктест по сигналам
-    for i in range(len(df_signals)):
-        if df_signals['signal'].iloc[i] == 1 and position == 0:
-            buy_price = df_signals['close'].iloc[i]
-            position = 1
-        elif df_signals['signal'].iloc[i] == -1 and position == 1:
-            sell_price = df_signals['close'].iloc[i]
-            capital *= sell_price / buy_price
-            position = 0
+    data = bt.feeds.GenericCSVData(
+        dataname=datafile,
+        dtformat=('%Y-%m-%d'),  # или подходящий формат!
+        datetime=0, open=1, high=2, low=3, close=4, volume=5, openinterest=-1, header=0
+    )
 
-    if position == 1:
-        sell_price = df_signals['close'].iloc[-1]
-        capital *= sell_price / buy_price
+    cerebro.adddata(data)
+    cerebro.broker.setcash(cash)
+    print(f'Начальный капитал: {cerebro.broker.getvalue():.2f}')
+    cerebro.run()
+    print(f'Финальный капитал: {cerebro.broker.getvalue():.2f}')
+    cerebro.plot()
 
-    print(f'Итоговый капитал: {capital:.2f} USDT')
-    return capital
-
-# Пример использования:
 if __name__ == "__main__":
-    df = pd.read_csv('твой_файл.csv')
-    simple_backtest(df, sma_crossover, fast_period=10, slow_period=50)
+    run_backtest(SmaCrossStrategy, '../../data/your_file.csv', fast_period=10, slow_period=50)
