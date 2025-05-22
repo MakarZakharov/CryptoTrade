@@ -20,3 +20,13 @@ class SmaCrossStrategy(bt.Strategy):
         if trade.isclosed:
             self.log(f'Сделка закрыта: П/У {trade.pnl:.2f} ({trade.pnlcomm:.2f} с учетом комиссии)')
             self.trades.append(trade.pnlcomm)
+
+    def next(self):
+        if not self.position:
+            if self.cross > 0:
+                self.log('Покупка')
+                self.buy()
+        else:
+            if self.cross < 0:
+                self.log('Продажа')
+                self.sell()
