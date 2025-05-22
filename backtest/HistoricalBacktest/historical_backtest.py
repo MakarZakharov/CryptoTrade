@@ -76,4 +76,7 @@ if __name__ == "__main__":
         slow_period=50,
         commission=0.00075
     )
+<<<<<<< HEAD
 
+=======
+>>>>>>> 51accdb4d41bc4a56f47e3f89899a3de2b1eda6b
