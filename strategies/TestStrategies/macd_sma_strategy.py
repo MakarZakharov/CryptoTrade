@@ -62,7 +62,7 @@ if __name__ == '__main__':
     cerebro.adddata(data)
     cerebro.addstrategy(MACD_SMA_Strategy)
     cerebro.broker.set_cash(100000)
-    cerebro.broker.setcommission(commission=0.001)
+    cerebro.broker.setcommission(commission=0.1)
 
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
