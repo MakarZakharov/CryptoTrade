@@ -37,6 +37,10 @@ class MACD_SMA_Strategy(bt.Strategy):
                self.sma_fast[0] < self.sma_slow[0]:
                 self.order = self.sell()
 
+    def notify_order(self, order):
+        if order.status in [order.Completed]:
+            self.order = None
+
 # === Завантаження CSV ===
 class PandasData(bt.feeds.PandasData):
     params = (
@@ -51,7 +55,6 @@ class PandasData(bt.feeds.PandasData):
 
 # === Основний запуск ===
 if __name__ == '__main__':
-    # Завантаження CSV
     df = pd.read_csv("../../data/binance/BTCUSDT/1d/2018_01_01-2025_01_01.csv")
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df.set_index('timestamp', inplace=True)
@@ -62,17 +65,47 @@ if __name__ == '__main__':
     cerebro.adddata(data)
     cerebro.addstrategy(MACD_SMA_Strategy)
     cerebro.broker.set_cash(100000)
-    cerebro.broker.setcommission(commission=0.001)
+    cerebro.broker.setcommission(commission=0.001)  # 0.1% комісія
 
+    # Додаємо аналізатори
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
 
-    print("Початковий баланс:", cerebro.broker.getvalue())
+    starting_cash = cerebro.broker.getvalue()
+    print("Початковий баланс:", starting_cash)
+
     results = cerebro.run()
     strat = results[0]
-    print("Фінальний баланс:", cerebro.broker.getvalue())
-    print("Sharpe Ratio:", strat.analyzers.sharpe.get_analysis())
-    print("Trade Analysis:", strat.analyzers.trades.get_analysis())
+
+    final_cash = cerebro.broker.getvalue()
+    print("Фінальний баланс:", final_cash)
+    print("Приріст капіталу: {:.2f}%".format((final_cash - starting_cash) / starting_cash * 100))
+
+    trades = strat.analyzers.trades.get_analysis()
+
+    # Безпечний доступ до total.closed
+    total_trades = getattr(trades.total, 'closed', 0)
+
+    # Безпечний доступ до won.total і lost.total
+    won_trades = getattr(getattr(trades, 'won', {}), 'total', 0)
+    lost_trades = getattr(getattr(trades, 'lost', {}), 'total', 0)
+
+    # Обчислення winrate
+    winrate = (won_trades / total_trades * 100) if total_trades > 0 else 0
+
+    print("Загальна кількість ордерів:", total_trades)
+    print("Кількість виграшних ордерів:", won_trades)
+    print("Кількість програшних ордерів:", lost_trades)
+    print("Winrate: {:.2f}%".format(winrate))
+
+    # Максимальна просадка
+    drawdown = strat.analyzers.drawdown.get_analysis()
+    print("Максимальна просадка: {:.2f}%".format(drawdown.max.drawdown))
+
+    # Sharpe Ratio - FIXED
+    sharpe = strat.analyzers.sharpe.get_analysis()
+    sharpe_ratio = sharpe.get('sharperatio', 'N/A')
+    print("Sharpe Ratio:", sharpe_ratio)
 
     cerebro.plot()
-
