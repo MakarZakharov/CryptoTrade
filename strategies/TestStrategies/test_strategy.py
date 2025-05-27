@@ -1,151 +1,264 @@
-# rsi_ema_bbands_strategy.py - Нова стратегія
-
 import backtrader as bt
 
 
-class RSI_EMA_BBands_ATR_Strategy(bt.Strategy):
-    """
-    Стратегія на основі RSI, EMA, Bollinger Bands і ATR
-
-    Логіка входу:
-    - RSI < 30 (перепроданість)
-    - Ціна перетинає нижню лінію Bollinger Bands знизу вгору
-    - Ціна вище EMA (підтвердження тренду)
-
-    Логіка виходу:
-    - Stop Loss / Take Profit на основі ATR
-    - RSI > 70 (перекупленість)
-    """
+class ImprovedHFT_Strategy(bt.Strategy):
+    """Покращена високочастотна стратегія з оптимізованим кодом"""
 
     params = (
-        ("rsi_period", 14),  # Залишаємо класичний
-        ("ema_period", 20),  # Середній тренд
-        ("bb_period", 20),
-        ("bb_devfactor", 2.0),  # Стандартне BB
-        ("atr_period", 14),
-        ("atr_multiplier_sl", 1.5),  # Більш "справедливий" SL
-        ("atr_multiplier_tp", 3.0),  # Класичне співвідношення
-        ("rsi_oversold", 35),  # Більш м'яка умова входу
-        ("rsi_overbought", 65),  # Раніший вихід
+        # Швидкі індикатори
+        ("ema_fast", 3), ("ema_slow", 8), ("rsi_period", 5),
+        ("macd_fast", 3), ("macd_slow", 8), ("macd_signal", 4),
+
+        # Позиційні параметри
+        ("position_size", 0.8), ("stop_loss", 0.008), ("take_profit", 0.015),
+        ("max_hold_bars", 3), ("signal_threshold", 2),
+
+        # Фільтри ризику
+        ("min_volume_ratio", 0.5), ("max_spread_pct", 0.002),
+        ("min_price_move", 0.0005), ("cooldown_bars", 1)
     )
 
     def __init__(self):
-        """Ініціалізуємо індикатори"""
-        print("Запуск стратегії RSI + EMA + Bollinger Bands + ATR...")
-
         # Основні індикатори
-        self.rsi = bt.ind.RSI(self.data.close, period=self.params.rsi_period)
-        self.ema = bt.ind.EMA(self.data.close, period=self.params.ema_period)
-        self.bb = bt.ind.BollingerBands(
-            self.data.close,
-            period=self.params.bb_period,
-            devfactor=self.params.bb_devfactor
+        self.ema_fast = bt.indicators.EMA(period=self.p.ema_fast)
+        self.ema_slow = bt.indicators.EMA(period=self.p.ema_slow)
+        self.rsi = bt.indicators.RSI(period=self.p.rsi_period)
+        self.macd = bt.indicators.MACD(
+            period_me1=self.p.macd_fast, period_me2=self.p.macd_slow,
+            period_signal=self.p.macd_signal
         )
-        self.atr = bt.ind.ATR(self.data, period=self.params.atr_period)
 
-        # Сигнали перетину Bollinger Bands
-        self.bb_bottom_cross = bt.ind.CrossUp(self.data.close, self.bb.lines.bot)
+        # Сигнали кросоверів
+        self.ema_cross_up = bt.indicators.CrossUp(self.ema_fast, self.ema_slow)
+        self.ema_cross_down = bt.indicators.CrossDown(self.ema_fast, self.ema_slow)
+        self.macd_cross_up = bt.indicators.CrossUp(self.macd.macd, self.macd.signal)
+        self.macd_cross_down = bt.indicators.CrossDown(self.macd.macd, self.macd.signal)
 
-        # Змінні для відслідковування
-        self.order = None
-        self.stop_loss = None
-        self.take_profit = None
-        self.trade_count = 0
+        # Додаткові швидкі індикатори
+        self.momentum = bt.indicators.Momentum(period=2)
+        self.atr = bt.indicators.ATR(period=5)
+        self.volume_sma = bt.indicators.SMA(self.data.volume, period=10)
+
+        # Стан стратегії
+        self.reset_position_state()
+        self.trade_stats = {'trades': 0, 'wins': 0, 'signals': 0, 'last_trade_bar': -999}
+
+    def reset_position_state(self):
+        self.entry_price = self.entry_bar = self.position_type = None
 
     def next(self):
-        """Головна логіка стратегії на кожному барі"""
-
-        # Якщо є активний ордер - чекаємо
-        if self.order:
+        if len(self.data) < 15:  # Мінімальна кількість даних
             return
 
-        current_price = self.data.close[0]
-
-        # Якщо є позиція - перевіряємо чи виходити
         if self.position:
-            self.check_exit(current_price)
+            self._manage_position()
         else:
-            # Якщо немає позиції - шукаємо вхід
-            self.check_entry(current_price)
+            self._scan_entry_signals()
 
-    def check_entry(self, price):
-        """Перевіряємо умови для входу в позицію"""
+    def _scan_entry_signals(self):
+        """Швидке сканування сигналів входу"""
+        current_bar = len(self.data)
 
-        # Потрібно достатньо даних для розрахунку індикаторів
-        min_bars = max(self.params.rsi_period, self.params.ema_period, self.params.bb_period)
-        if len(self.data) < min_bars + 5:
+        # Кулдаун між угодами
+        if current_bar <= self.trade_stats['last_trade_bar'] + self.p.cooldown_bars:
             return
 
-        # Умови для покупки
-        rsi_oversold = self.rsi[0] < self.params.rsi_oversold  # RSI показує перепроданість
-        bb_bounce = self.bb_bottom_cross[0]  # Відскок від нижньої лінії BB
-        trend_up = price > self.ema[0]  # Ціна вище EMA (бичачий тренд)
+        # Швидкі фільтри ліквідності
+        if not self._liquidity_filter():
+            return
 
-        # Додаткова перевірка: ціна не повинна бути занадто високо від EMA
-        price_not_too_high = price < self.ema[0] * 1.05  # Не більше 5% вище EMA
+        signals = self._calculate_signals()
+        self.trade_stats['signals'] += 1
 
-        # Якщо всі умови виконані - купуємо
-        conditions_met = sum([rsi_oversold, bb_bounce, trend_up]) >= 2
-        if conditions_met and price_not_too_high:
-            self.buy_signal(price)
+        # Вхід по сигналах
+        if signals['buy'] >= self.p.signal_threshold and signals['buy'] > signals['sell']:
+            self._enter_long(signals['buy'])
+        elif signals['sell'] >= self.p.signal_threshold and signals['sell'] > signals['buy']:
+            self._enter_short(signals['sell'])
 
-    def buy_signal(self, price):
-        """Виконуємо покупку"""
-        self.order = self.buy()
-        self.trade_count += 1
+    def _liquidity_filter(self):
+        """Швидка перевірка ліквідності"""
+        # Обсяг
+        if len(self.volume_sma) > 0 and self.data.volume[0] < self.volume_sma[0] * self.p.min_volume_ratio:
+            return False
 
-        # Розраховуємо стоп-лос та тейк-профіт на основі ATR
-        atr_value = self.atr[0]
-        self.stop_loss = price - (atr_value * self.params.atr_multiplier_sl)
-        self.take_profit = price + (atr_value * self.params.atr_multiplier_tp)
+        # Спред (високий-низький)
+        spread_pct = (self.data.high[0] - self.data.low[0]) / self.data.close[0]
+        if spread_pct > self.p.max_spread_pct:
+            return False
 
-        print(f"КУПУЄМО #{self.trade_count}: ${price:.2f} | "
-              f"SL: ${self.stop_loss:.2f} | TP: ${self.take_profit:.2f} | "
-              f"RSI: {self.rsi[0]:.1f}")
+        # Мінімальний рух ціни
+        if len(self.data.close) > 1:
+            price_move = abs(self.data.close[0] - self.data.close[-1]) / self.data.close[-1]
+            if price_move < self.p.min_price_move:
+                return False
 
-    def check_exit(self, price):
-        """Перевіряємо умови для виходу з позиції"""
+        return True
 
-        exit_reasons = []
+    def _calculate_signals(self):
+        """Компактний розрахунок сигналів"""
+        buy = sell = 0
 
-        # Перевіряємо умови виходу
-        if price <= self.stop_loss:
-            exit_reasons.append("Stop Loss")
-        if price >= self.take_profit:
-            exit_reasons.append("Take Profit")
-        if self.rsi[0] > self.params.rsi_overbought:
-            exit_reasons.append(f"RSI > {self.params.rsi_overbought}")
-        # Додаткова умова: якщо ціна пробила верхню лінію BB (потенційна перекупленість)
-        if price > self.bb.lines.top[0]:
-            exit_reasons.append("Price above BB Top")
+        # Кросовери (найважливіші)
+        if self.ema_cross_up[0]: buy += 3
+        if self.ema_cross_down[0]: sell += 3
+        if self.macd_cross_up[0]: buy += 2
+        if self.macd_cross_down[0]: sell += 2
 
-        if exit_reasons:
-            self.order = self.sell()
-            reason = ", ".join(exit_reasons)
-            print(f"ПРОДАЄМО: ${price:.2f} | Причина: {reason} | RSI: {self.rsi[0]:.1f}")
+        # Поточні тренди
+        if self.ema_fast[0] > self.ema_slow[0]:
+            buy += 1
+        else:
+            sell += 1
 
-    def notify_order(self, order):
-        """Обробляємо статуси ордерів"""
-        if order.status == order.Completed:
-            self.order = None  # Ордер виконаний
+        if self.macd.macd[0] > self.macd.signal[0]:
+            buy += 1
+        else:
+            sell += 1
 
-    def notify_trade(self, trade):
-        """Обробляємо закриті угоди"""
-        if trade.isclosed:
-            profit_loss = trade.pnl
-            result = "ПРИБУТОК" if profit_loss > 0 else "ЗБИТОК"
+        # RSI фільтр (не екстремальні значення)
+        if 25 < self.rsi[0] < 75:
+            if self.rsi[0] < 45:
+                buy += 1
+            elif self.rsi[0] > 55:
+                sell += 1
 
-            # Розраховуємо відсоток прибутку/збитку
-            if hasattr(trade, 'price') and trade.price > 0:
-                pnl_percent = (profit_loss / (trade.price * abs(trade.size))) * 100
-                print(f"Угода закрита: {result} ${profit_loss:.2f} ({pnl_percent:+.2f}%)")
-            else:
-                print(f"Угода закрита: {result} ${profit_loss:.2f}")
+        # Momentum
+        if self.momentum[0] > 0:
+            buy += 1
+        else:
+            sell += 1
 
-            # Скидаємо рівні
-            self.stop_loss = None
-            self.take_profit = None
+        return {'buy': buy, 'sell': sell}
 
-    def get_strategy_name(self):
-        """Назва стратегії"""
-        return "RSI EMA Bollinger Bands ATR Strategy"
+    def _enter_long(self, signal_strength):
+        size = self._calculate_position_size()
+        if size > 0:
+            self.buy(size=size)
+            self._set_position_state('LONG', len(self.data))
+            print(f"🟢 LONG #{self.trade_stats['trades']}: ${self.data.close[0]:.4f} | "
+                  f"Size: {size} | Signals: {signal_strength}")
+
+    def _enter_short(self, signal_strength):
+        size = self._calculate_position_size()
+        if size > 0:
+            self.sell(size=size)
+            self._set_position_state('SHORT', len(self.data))
+            print(f"🔴 SHORT #{self.trade_stats['trades']}: ${self.data.close[0]:.4f} | "
+                  f"Size: {size} | Signals: {signal_strength}")
+
+    def _calculate_position_size(self):
+        """Динамічний розрахунок розміру позиції з урахуванням волатильності"""
+        cash = self.broker.get_cash()
+        price = self.data.close[0]
+
+        # Базовий розмір
+        base_size = int((cash * self.p.position_size) / price)
+
+        # Корекція на волатільність (ATR)
+        if len(self.atr) > 0:
+            volatility_factor = min(1.0, 0.02 / (self.atr[0] / price))  # Зменшуємо розмір при високій волатільності
+            adjusted_size = int(base_size * volatility_factor)
+            return max(adjusted_size, 1)
+
+        return base_size
+
+    def _set_position_state(self, pos_type, bar):
+        self.entry_price = self.data.close[0]
+        self.entry_bar = bar
+        self.position_type = pos_type
+        self.trade_stats['trades'] += 1
+        self.trade_stats['last_trade_bar'] = bar
+
+    def _manage_position(self):
+        """Ефективне управління позицією"""
+        if not self.entry_price:
+            return
+
+        price = self.data.close[0]
+        bars_held = len(self.data) - self.entry_bar
+
+        # Розрахунок прибутку
+        if self.position_type == 'LONG':
+            profit_pct = (price - self.entry_price) / self.entry_price
+            exit_signals = [
+                (profit_pct <= -self.p.stop_loss, "Stop Loss"),
+                (profit_pct >= self.p.take_profit, "Take Profit"),
+                (bars_held >= self.p.max_hold_bars, "Max Hold"),
+                (self.ema_cross_down[0] or self.macd_cross_down[0], "Reversal")
+            ]
+        else:  # SHORT
+            profit_pct = (self.entry_price - price) / self.entry_price
+            exit_signals = [
+                (profit_pct <= -self.p.stop_loss, "Stop Loss"),
+                (profit_pct >= self.p.take_profit, "Take Profit"),
+                (bars_held >= self.p.max_hold_bars, "Max Hold"),
+                (self.ema_cross_up[0] or self.macd_cross_up[0], "Reversal")
+            ]
+
+        # Перевірка умов виходу
+        for condition, reason in exit_signals:
+            if condition:
+                self._exit_position(price, profit_pct, reason, bars_held)
+                break
+
+    def _exit_position(self, price, profit_pct, reason, bars_held):
+        self.close()
+
+        if profit_pct > 0:
+            self.trade_stats['wins'] += 1
+
+        emoji = "📈" if profit_pct > 0 else "📉"
+        print(f"⚡ CLOSE {self.position_type}: ${price:.4f} | {emoji} {profit_pct * 100:+.2f}% | "
+              f"{reason} | {bars_held}bars")
+
+        self.reset_position_state()
+
+    def stop(self):
+        """Компактна статистика"""
+        final_value = self.broker.get_value()
+        initial_cash = self.broker.startingcash  # Використовуємо початковий капітал брокера
+        total_return = (final_value - initial_cash) / initial_cash * 100
+        win_rate = (self.trade_stats['wins'] / self.trade_stats['trades'] * 100) if self.trade_stats[
+                                                                                        'trades'] > 0 else 0
+
+        print(f"\n{'=' * 50}")
+        print(f"🚀 ПОКРАЩЕНА HFT СТРАТЕГІЯ - РЕЗУЛЬТАТИ")
+        print(f"{'=' * 50}")
+        print(f"💰 Початковий капітал: ${initial_cash:,.2f}")
+        print(f"💰 Фінальний капітал: ${final_value:,.2f}")
+        print(f"💰 P&L: ${final_value - initial_cash:+,.2f} ({total_return:+.2f}%)")
+        print(f"🔄 Угод: {self.trade_stats['trades']} | Win Rate: {win_rate:.1f}%")
+        print(f"📡 Сигналів: {self.trade_stats['signals']}")
+        if self.trade_stats['trades'] > 0:
+            print(f"💹 Середнє на угоду: {total_return / self.trade_stats['trades']:.3f}%")
+        print(f"{'=' * 50}")
+
+        # Повертаємо результати для подальшого використання
+        return {
+            'initial_cash': initial_cash,
+            'final_value': final_value,
+            'profit_loss': final_value - initial_cash,
+            'total_return_pct': total_return,
+            'total_trades': self.trade_stats['trades'],
+            'wins': self.trade_stats['wins'],
+            'win_rate_pct': win_rate,
+            'total_signals': self.trade_stats['signals'],
+            'avg_profit_per_trade_pct': total_return / self.trade_stats['trades'] if self.trade_stats[
+                                                                                         'trades'] > 0 else 0
+        }
+
+    def get_performance_metrics(self):
+        """Отримати поточні метрики продуктивності"""
+        current_value = self.broker.get_value()
+        initial_cash = self.broker.startingcash
+        current_return = (current_value - initial_cash) / initial_cash * 100
+
+        return {
+            'current_value': current_value,
+            'current_return_pct': current_return,
+            'current_profit_loss': current_value - initial_cash,
+            'trades_count': self.trade_stats['trades'],
+            'win_rate_pct': (self.trade_stats['wins'] / self.trade_stats['trades'] * 100) if self.trade_stats[
+                                                                                                 'trades'] > 0 else 0
+        }
