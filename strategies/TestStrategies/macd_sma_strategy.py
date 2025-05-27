@@ -42,8 +42,6 @@ class MACD_SMA_Strategy(bt.Strategy):
         if order.status in [order.Completed]:
             self.order = None
 
-
-# === Завантаження CSV ===
 class PandasData(bt.feeds.PandasData):
     params = (
         ('date', 'timestamp'),
