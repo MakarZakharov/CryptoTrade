@@ -7,10 +7,10 @@ import pandas as pd
 # === Стратегія ===
 class MACD_SMA_Strategy(bt.Strategy):
     params = (
-        ("macd_fast", 12),
-        ("macd_slow", 26),
-        ("sma_fast", 10),
-        ("sma_slow", 50),
+        ("macd_fast", 14),
+        ("macd_slow", 20),
+        ("sma_fast", 20),
+        ("sma_slow", 75),
     )
 
     def __init__(self):

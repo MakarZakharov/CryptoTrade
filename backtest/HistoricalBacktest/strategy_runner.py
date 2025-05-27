@@ -2,7 +2,7 @@
 
 import backtrader as bt
 import pandas as pd
-from test_strategy import RSI_EMA_BBands_ATR_Strategy
+from CryptoTrade.strategies.TestStrategies.test_strategy import RSI_EMA_BBands_ATR_Strategy
 
 
 class SimpleBacktester:
