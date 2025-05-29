@@ -76,4 +76,3 @@ if __name__ == "__main__":
         slow_period=50,
         commission=0.00075
     )
-
