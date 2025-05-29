@@ -1,338 +1,259 @@
 import backtrader as bt
-import backtrader.indicators as btind
-
 
 class RSI_SMA_Strategy(bt.Strategy):
     """
-    Улучшенная торговая стратегия для высокой доходности
-
-    Стратегии:
-    1. 'simple_rsi' - Простая RSI стратегия
-    2. 'aggressive_momentum' - Агрессивная momentum стратегия
-    3. 'trend_breakout' - Стратегия прорыва трендов
-    4. 'buy_and_hold' - Стратегия покупай и держи
-    5. 'mean_reversion' - Стратегия возврата к среднему
-    6. 'multi_indicator' - Мульти-индикаторная стратегия
-    7. 'dynamic_risk' - Стратегия с динамическими рисками
+    Агрессивная стратегия для дневного таймфрейма с частыми сделками
+    Использует RSI и SMA для генерации торговых сигналов
     """
 
     params = (
-        ('rsi_period', 14),
-        ('sma_period', 50),
-        ('sma_fast', 20),
-        ('sma_slow', 50),
-        ('rsi_oversold', 30),
-        ('rsi_overbought', 70),
-        ('position_size', 0.95),
-        ('printlog', False),
-        ('strategy_type', 'simple_rsi'),
-        # Параметры для агрессивных стратегий
-        ('momentum_period', 10),
-        ('volatility_period', 20),
-        ('breakout_period', 20),
-        ('stop_loss_pct', 0.05),  # 5% стоп-лосс
-        ('take_profit_pct', 0.15),  # 15% тейк-профит
-        ('trailing_stop_pct', 0.08),  # 8% трейлинг-стоп
-        ('use_leverage', True),
-        ('leverage_multiplier', 1.5),
+        # RSI параметры
+        ('rsi_period', 18),
+        ('rsi_overbought', 35),
+        ('rsi_oversold', 65),
+        ('rsi_exit_overbought', 75),
+        ('rsi_exit_oversold', 25),
+
+        # SMA параметры
+        ('sma_fast', 10),
+        ('sma_slow', 20),
+
+        # Управление позициями
+        ('position_size', 0.12),  # 10% от капитала
+        ('stop_loss', 0.02),     # 2% стоп-лосс
+        ('take_profit', 0.035),   # 3% тейк-профит
+
+        # Логирование
+        ('log_enabled', True),   # Включить/выключить логирование
     )
 
-    def log(self, txt, dt=None, doprint=False):
-        """Функция логирования"""
-        if self.params.printlog or doprint:
-            dt = dt or self.datas[0].datetime.date(0)
-            print(f'{dt.isoformat()}, {txt}')
-
     def __init__(self):
-        """Инициализация индикаторов"""
-        self.dataclose = self.datas[0].close
-        self.datahigh = self.datas[0].high
-        self.datalow = self.datas[0].low
-        self.datavolume = self.datas[0].volume
-
         # Основные индикаторы
-        self.rsi = btind.RSI(self.datas[0], period=self.params.rsi_period)
-        self.sma = btind.SimpleMovingAverage(self.datas[0], period=self.params.sma_period)
-        self.sma_fast = btind.SimpleMovingAverage(self.datas[0], period=self.params.sma_fast)
-        self.sma_slow = btind.SimpleMovingAverage(self.datas[0], period=self.params.sma_slow)
+        self.rsi = bt.indicators.RSI(period=self.params.rsi_period)
+        self.sma_fast = bt.indicators.SMA(period=self.params.sma_fast)
+        self.sma_slow = bt.indicators.SMA(period=self.params.sma_slow)
 
-        # Дополнительные индикаторы
-        self.ema_fast = btind.ExponentialMovingAverage(self.datas[0], period=12)
-        self.ema_slow = btind.ExponentialMovingAverage(self.datas[0], period=26)
-        self.macd = btind.MACD(self.datas[0])
-        self.bollinger = btind.BollingerBands(self.datas[0], period=20)
-        self.momentum = btind.Momentum(self.datas[0], period=self.params.momentum_period)
-        self.roc = btind.RateOfChange(self.datas[0], period=10)
+        # Дополнительные индикаторы для более частой торговли
+        self.ema_fast = bt.indicators.EMA(period=8)
+        self.ema_slow = bt.indicators.EMA(period=16)
 
-        # Для стратегии прорыва - НЕ создаем сигналы в __init__
-        if self.params.strategy_type == 'trend_breakout':
-            self.highest = btind.Highest(self.datahigh, period=self.params.breakout_period)
-            self.lowest = btind.Lowest(self.datalow, period=self.params.breakout_period)
-            self.volume_sma = btind.SimpleMovingAverage(self.datavolume, period=20)
+        # Сигналы
+        self.sma_crossover = bt.indicators.CrossOver(self.sma_fast, self.sma_slow)
+        self.ema_crossover = bt.indicators.CrossOver(self.ema_fast, self.ema_slow)
 
-        # Настройка сигналов для других стратегий
-        self._setup_strategy_signals()
-
-        # Переменные для отслеживания
+        # Переменные для отслеживания позиций
+        self.entry_price = 0
         self.order = None
-        self.buyprice = None
-        self.buycomm = None
-        self.stop_loss_price = None
-        self.take_profit_price = None
-        self.consecutive_losses = 0
-        self.consecutive_wins = 0
-        self.buy_and_hold_executed = False
 
-    def _setup_strategy_signals(self):
-        """Настройка сигналов для разных стратегий"""
+    def log(self, txt, dt=None):
+        """Функция для логирования"""
+        if self.params.log_enabled:
+            dt = dt or self.datas[0].datetime.date(0)
+            print(f'{dt.isoformat()}: {txt}')
 
-        if self.params.strategy_type == 'simple_rsi':
-            # Простая RSI стратегия - должна давать много сделок
-            self.buy_signal = self.rsi < self.params.rsi_oversold
-            self.sell_signal = self.rsi > self.params.rsi_overbought
+    def next(self):
+        # Отменяем предыдущие ордера если есть
+        if self.order:
+            return
 
-        elif self.params.strategy_type == 'aggressive_momentum':
-            # Агрессивная momentum стратегия - более мягкие условия
-            self.buy_signal = bt.Or(
-                bt.And(self.rsi < 45, self.momentum > 0),
-                bt.And(self.dataclose > self.sma_fast, self.rsi < 50)
-            )
-            self.sell_signal = bt.Or(
-                self.rsi > 70,
-                bt.And(self.dataclose < self.sma_fast, self.rsi > 55)
-            )
+        current_price = self.data.close[0]
+        rsi_value = self.rsi[0]
 
-        elif self.params.strategy_type == 'multi_indicator':
-            # Мульти-индикаторная стратегия - используем ИЛИ вместо И для входа
-            self.buy_signal = bt.Or(
-                self.rsi < self.params.rsi_oversold,  # RSI перепродан
-                bt.And(self.dataclose > self.sma_fast, self.sma_fast > self.sma_slow),  # Восходящий тренд
-                self.dataclose < self.bollinger.lines.bot  # Цена ниже нижней полосы Боллинджера
-            )
-            self.sell_signal = bt.Or(
-                self.rsi > self.params.rsi_overbought,
-                self.dataclose < self.sma_fast,
-                self.dataclose > self.bollinger.lines.top
-            )
+        if not self.position:
+            # Условия для LONG позиций (множественные сигналы для частой торговли)
+            long_conditions = [
+                # RSI сигналы
+                rsi_value < self.params.rsi_oversold,
+                rsi_value < 35 and rsi_value > self.rsi[-1],  # RSI растет от низких значений
 
-        elif self.params.strategy_type == 'dynamic_risk':
-            # Стратегия с динамическими рисками - простые условия
-            self.buy_signal = bt.Or(
-                self.rsi < 40,  # RSI ниже 40
-                bt.And(self.momentum > 0, self.dataclose > self.sma),  # Положительный моментум + цена выше SMA
-                self.roc > 5  # Сильный положительный ROC
-            )
-            self.sell_signal = bt.Or(
-                self.rsi > 65,
-                bt.And(self.momentum < 0, self.dataclose < self.sma),
-                self.roc < -5
-            )
+                # SMA сигналы
+                self.sma_crossover > 0,  # Быстрая SMA пересекает медленную вверх
+                current_price > self.sma_fast[0] and self.sma_fast[0] > self.sma_fast[-1],
 
-        elif self.params.strategy_type == 'mean_reversion':
-            # Стратегия возврата к среднему
-            self.buy_signal = bt.Or(
-                self.rsi < 35,
-                self.dataclose < self.bollinger.lines.bot
-            )
+                # EMA сигналы
+                self.ema_crossover > 0,  # Быстрая EMA пересекает медленную вверх
+                current_price > self.ema_fast[0],
 
-            self.sell_signal = bt.Or(
-                self.rsi > 65,
-                self.dataclose > self.bollinger.lines.top
-            )
+                # Дополнительные сигналы
+                current_price > self.data.close[-1],  # Цена растет
+                rsi_value > 30 and rsi_value < 50,  # RSI в зоне восстановления
+            ]
 
-        elif self.params.strategy_type == 'buy_and_hold':
-            # Простая стратегия покупай и держи
-            pass  # Логика в next()
+            # Условия для SHORT позиций
+            short_conditions = [
+                # RSI сигналы
+                rsi_value > self.params.rsi_overbought,
+                rsi_value > 65 and rsi_value < self.rsi[-1],  # RSI падает от высоких значений
 
-        # trend_breakout обрабатывается в next() из-за индикаторов
+                # SMA сигналы
+                self.sma_crossover < 0,  # Быстрая SMA пересекает медленную вниз
+                current_price < self.sma_fast[0] and self.sma_fast[0] < self.sma_fast[-1],
 
-        elif self.params.strategy_type == 'multi_indicator':
-            # Мульти-индикаторная стратегия
-            self.buy_signal = bt.And(
-                self.rsi < 30,
-                self.dataclose < self.sma_slow,
-                self.momentum > 0
-            )
-            self.sell_signal = bt.Or(
-                self.rsi > 70,
-                self.dataclose > self.sma_slow,
-                self.momentum < 0
-            )
+                # EMA сигналы
+                self.ema_crossover < 0,  # Быстрая EMA пересекает медленную вниз
+                current_price < self.ema_fast[0],
 
-        elif self.params.strategy_type == 'dynamic_risk':
-            # Стратегия с динамическими рисками
-            self.buy_signal = bt.And(
-                self.rsi < 30,
-                self.dataclose < self.sma_slow,
-                self.momentum > 0
-            )
-            self.sell_signal = bt.Or(
-                self.rsi > 70,
-                self.dataclose > self.sma_slow,
-                self.momentum < 0
-            )
+                # Дополнительные сигналы
+                current_price < self.data.close[-1],  # Цена падает
+                rsi_value < 70 and rsi_value > 50,  # RSI в зоне ослабления
+            ]
+
+            # Выполняем сделку если выполнено хотя бы 2 условия
+            if sum(long_conditions) >= 2:
+                # ИСПРАВЛЕННЫЙ расчет размера позиции
+                cash_amount = self.broker.getcash() * self.params.position_size
+                size = cash_amount / current_price
+                # Убеждаемся что размер минимум 0.001 (для крипто)
+                size = max(size, 0.001)
+
+                self.order = self.buy(size=size)
+                self.entry_price = current_price
+                self.log(f'BUY EXECUTED: Size={size:.6f}, Price={current_price:.2f}, RSI={rsi_value:.2f}, Conditions={sum(long_conditions)}')
+
+            elif sum(short_conditions) >= 2:
+                # ИСПРАВЛЕННЫЙ расчет размера позиции для SHORT
+                cash_amount = self.broker.getcash() * self.params.position_size
+                size = cash_amount / current_price
+                # Убеждаемся что размер минимум 0.001 (для крипто)
+                size = max(size, 0.001)
+
+                self.order = self.sell(size=size)
+                self.entry_price = current_price
+                self.log(f'SELL EXECUTED: Size={size:.6f}, Price={current_price:.2f}, RSI={rsi_value:.2f}, Conditions={sum(short_conditions)}')
+
+        else:
+            # Управление открытыми позициями
+            if self.position.size > 0:  # LONG позиция
+                # Условия выхода из LONG
+                exit_conditions = [
+                    rsi_value > self.params.rsi_exit_overbought,
+                    self.sma_crossover < 0,
+                    self.ema_crossover < 0,
+                    current_price < self.sma_fast[0],
+                    rsi_value > 70 and rsi_value < self.rsi[-1],  # RSI разворачивается вниз
+                ]
+
+                # Стоп-лосс и тейк-профит
+                stop_price = self.entry_price * (1 - self.params.stop_loss)
+                profit_price = self.entry_price * (1 + self.params.take_profit)
+
+                if (sum(exit_conditions) >= 1 or
+                    current_price <= stop_price or
+                    current_price >= profit_price):
+                    self.order = self.close()
+                    self.log(f'CLOSE LONG: Price={current_price:.2f}, Entry={self.entry_price:.2f}, RSI={rsi_value:.2f}')
+
+            elif self.position.size < 0:  # SHORT позиция
+                # Условия выхода из SHORT
+                exit_conditions = [
+                    rsi_value < self.params.rsi_exit_oversold,
+                    self.sma_crossover > 0,
+                    self.ema_crossover > 0,
+                    current_price > self.sma_fast[0],
+                    rsi_value < 30 and rsi_value > self.rsi[-1],  # RSI разворачивается вверх
+                ]
+
+                # Стоп-лосс и тейк-профит для SHORT
+                stop_price = self.entry_price * (1 + self.params.stop_loss)
+                profit_price = self.entry_price * (1 - self.params.take_profit)
+
+                if (sum(exit_conditions) >= 1 or
+                    current_price >= stop_price or
+                    current_price <= profit_price):
+                    self.order = self.close()
+                    self.log(f'CLOSE SHORT: Price={current_price:.2f}, Entry={self.entry_price:.2f}, RSI={rsi_value:.2f}')
 
     def notify_order(self, order):
-        """Уведомления об ордерах"""
         if order.status in [order.Submitted, order.Accepted]:
             return
 
         if order.status in [order.Completed]:
             if order.isbuy():
-                self.log(
-                    f'ПОКУПКА ВЫПОЛНЕНА, Цена: {order.executed.price:.2f}, '
-                    f'Стоимость: {order.executed.value:.2f}, '
-                    f'Комиссия: {order.executed.comm:.2f}', doprint=True
-                )
-                self.buyprice = order.executed.price
-                self.buycomm = order.executed.comm
-
-                # Устанавливаем стоп-лосс и тейк-профит
-                self.stop_loss_price = self.buyprice * (1 - self.params.stop_loss_pct)
-                self.take_profit_price = self.buyprice * (1 + self.params.take_profit_pct)
-                if hasattr(self.params, 'trailing_stop_pct'):
-                    self.trailing_stop_price = self.buyprice * (1 - self.params.trailing_stop_pct)
-
-            else:
-                self.log(
-                    f'ПРОДАЖА ВЫПОЛНЕНА, Цена: {order.executed.price:.2f}, '
-                    f'Стоимость: {order.executed.value:.2f}, '
-                    f'Комиссия: {order.executed.comm:.2f}', doprint=True
-                )
-
-            self.bar_executed = len(self)
+                self.log(f'BUY COMPLETED: Price={order.executed.price:.2f}, Size={order.executed.size:.6f}, Cost=${order.executed.value:.2f}')
+            elif order.issell():
+                self.log(f'SELL COMPLETED: Price={order.executed.price:.2f}, Size={order.executed.size:.6f}, Value=${order.executed.value:.2f}')
 
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            self.log('Ордер отменен/отклонен/нет маржи', doprint=True)
+            self.log(f'Order FAILED: Status={order.getstatusname()}, Reason: Insufficient funds or invalid size')
 
         self.order = None
 
     def notify_trade(self, trade):
-        """Уведомления о сделках"""
         if not trade.isclosed:
             return
 
-        self.log(f'ОПЕРАЦИЯ ПРИБЫЛЬ, Общая: {trade.pnl:.2f}, Чистая: {trade.pnlcomm:.2f}', doprint=True)
-
-        # Отслеживаем последовательные победы/поражения
-        if trade.pnlcomm > 0:
-            self.consecutive_wins += 1
-            self.consecutive_losses = 0
+        pnl = trade.pnl
+        # Fix for ZeroDivisionError: check if trade.value is zero
+        if abs(trade.value) > 0:
+            pnl_pct = (trade.pnl / abs(trade.value)) * 100
+            self.log(f'TRADE CLOSED: PnL=${pnl:.2f}, PnL%={pnl_pct:.2f}%, Value=${abs(trade.value):.2f}')
         else:
-            self.consecutive_losses += 1
-            self.consecutive_wins = 0
+            # Handle case where trade value is zero
+            self.log(f'TRADE CLOSED: PnL=${pnl:.2f}, PnL%=N/A (zero value trade), Value=${abs(trade.value):.2f}')
 
-    def _calculate_position_size(self):
-        """Расчет размера позиции"""
-        base_position_size = self.params.position_size
 
-        # Увеличиваем размер позиции после побед
-        if self.consecutive_wins >= 2:
-            base_position_size = min(0.99, base_position_size * 1.1)
+# Добавляем класс ScalpingStrategy с исправлениями
+class ScalpingStrategy(bt.Strategy):
+    """
+    Дополнительная скальпинговая стратегия для очень частой торговли
+    """
 
-        # Применяем имитацию левереджа
-        if self.params.use_leverage:
-            base_position_size *= self.params.leverage_multiplier
+    params = (
+        ('rsi_period', 7),
+        ('rsi_upper', 65),
+        ('rsi_lower', 35),
+        ('bb_period', 10),
+        ('bb_devfactor', 1.5),
+        ('position_size', 0.05),
+    )
 
-        return min(0.99, base_position_size)
+    def __init__(self):
+        self.rsi = bt.indicators.RSI(period=self.params.rsi_period)
+        self.bb = bt.indicators.BollingerBands(period=self.params.bb_period,
+                                               devfactor=self.params.bb_devfactor)
+        self.ema5 = bt.indicators.EMA(period=5)
+        self.ema13 = bt.indicators.EMA(period=13)
 
-    def _check_exit_conditions(self):
-        """Проверка условий выхода из позиции"""
-        if not self.buyprice:
-            return False
-
-        current_price = self.dataclose[0]
-
-        # Стоп-лосс
-        if self.stop_loss_price and current_price <= self.stop_loss_price:
-            self.log(f'СТОП-ЛОСС: {current_price:.2f} <= {self.stop_loss_price:.2f}', doprint=True)
-            return True
-
-        # Тейк-профит
-        if self.take_profit_price and current_price >= self.take_profit_price:
-            self.log(f'ТЕЙК-ПРОФИТ: {current_price:.2f} >= {self.take_profit_price:.2f}', doprint=True)
-            return True
-
-        return False
+        self.order = None
 
     def next(self):
-        """Основная логика стратегии"""
-        # Включаем подробное логирование только для отладки
-        debug_logging = self.params.printlog
-
-        if debug_logging:
-            self.log(f'Закрытие: {self.dataclose[0]:.2f}, RSI: {self.rsi[0]:.2f}, '
-                    f'SMA: {self.sma[0]:.2f}')
-
-        # Если есть активный ордер, ждем его исполнения
         if self.order:
             return
 
-        # Если есть позиция, проверяем условия выхода
-        if self.position:
-            # Проверяем стоп-лосс, тейк-профит
-            if self._check_exit_conditions():
-                self.order = self.sell(size=self.position.size)
-                return
+        current_price = self.data.close[0]
+        rsi_val = self.rsi[0]
 
-            # Проверяем сигнал на продажу для разных стратегий
-            should_sell = False
+        if not self.position:
+            # Сигналы на покупку (очень агрессивные)
+            if (rsi_val < self.params.rsi_lower and
+                current_price <= self.bb.lines.bot[0] and
+                current_price > self.ema5[0]):
 
-            if self.params.strategy_type == 'buy_and_hold':
-                # Никогда не продаем для buy_and_hold
-                should_sell = False
-            elif self.params.strategy_type == 'trend_breakout':
-                # Динамические сигналы для прорыва
-                if (len(self.lowest) > 0 and self.dataclose[0] < self.lowest[0]) or self.rsi[0] < 30:
-                    should_sell = True
-            elif hasattr(self, 'sell_signal'):
-                should_sell = self.sell_signal[0]
+                cash_amount = self.broker.getcash() * self.params.position_size
+                size = max(cash_amount / current_price, 0.001)
+                self.order = self.buy(size=size)
 
-            if should_sell:
-                self.log(f'СИГНАЛ ПРОДАЖИ: RSI={self.rsi[0]:.2f}, Стратегия={self.params.strategy_type}', doprint=True)
-                self.order = self.sell(size=self.position.size)
+            # Сигналы на продажу
+            elif (rsi_val > self.params.rsi_upper and
+                  current_price >= self.bb.lines.top[0] and
+                  current_price < self.ema5[0]):
 
+                cash_amount = self.broker.getcash() * self.params.position_size
+                size = max(cash_amount / current_price, 0.001)
+                self.order = self.sell(size=size)
         else:
-            # Если нет позиции, ищем сигнал на покупку
-            should_buy = False
+            # Быстрый выход из позиций
+            if self.position.size > 0:
+                if rsi_val > 60 or current_price < self.ema5[0]:
+                    self.order = self.close()
+            elif self.position.size < 0:
+                if rsi_val < 40 or current_price > self.ema5[0]:
+                    self.order = self.close()
 
-            if self.params.strategy_type == 'buy_and_hold':
-                # Покупаем один раз в начале
-                if not self.buy_and_hold_executed:
-                    should_buy = True
-                    self.buy_and_hold_executed = True
-            elif self.params.strategy_type == 'trend_breakout':
-                # Динамические сигналы для прорыва
-                if (len(self.highest) > 0 and len(self.volume_sma) > 0 and
-                    self.dataclose[0] > self.highest[0] and
-                    self.rsi[0] > 50 and
-                    self.datavolume[0] > self.volume_sma[0]):
-                    should_buy = True
-            elif hasattr(self, 'buy_signal'):
-                should_buy = self.buy_signal[0]
+    def notify_order(self, order):
+        if order.status in [order.Completed]:
+            self.order = None
 
-                # Отладочная информация
-                if debug_logging:
-                    self.log(f'Проверка сигнала покупки: {should_buy}, '
-                            f'RSI: {self.rsi[0]:.2f}, SMA_fast: {self.sma_fast[0]:.2f}, '
-                            f'SMA_slow: {self.sma_slow[0]:.2f}, Momentum: {self.momentum[0]:.2f}')
 
-            if should_buy:
-                self.log(f'СИГНАЛ ПОКУПКИ: RSI={self.rsi[0]:.2f}, Стратегия={self.params.strategy_type}', doprint=True)
 
-                # Рассчитываем размер позиции
-                position_size = self._calculate_position_size()
-                size = int(self.broker.getcash() * position_size / self.dataclose[0])
 
-                if size > 0:
-                    self.order = self.buy(size=size)
-                else:
-                    self.log(f'Недостаточно средств для покупки. Размер: {size}', doprint=True)
-
-    def stop(self):
-        """Вызывается в конце бэктеста"""
-        final_value = self.broker.getvalue()
-        total_return = (final_value - 10000) / 10000 * 100
-        self.log(f'Итоговая стоимость портфеля: {final_value:.2f}', doprint=True)
-        self.log(f'Общая доходность: {total_return:.2f}%', doprint=True)
-        self.log(f'Стратегия: {self.params.strategy_type}', doprint=True)
