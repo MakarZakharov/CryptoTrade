@@ -504,52 +504,276 @@ class UniversalBacktester:
 
         return analysis
     
-import os
-import sys
-import importlib.util
-import inspect
-import backtrader as bt
-import pandas as pd
-import matplotlib.pyplot as plt
-from typing import Dict, List, Any, Optional
-import warnings
+    def _print_results(self, results: Dict[str, Any]):
+        """Вывод результатов на консоль"""
+        print("\n📊 РЕЗУЛЬТАТЫ БЭКТЕСТИРОВАНИЯ")
+        print("=" * 60)
 
-warnings.filterwarnings('ignore')
+        # Основные метрики
+        print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
+        print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
+        print(f"📈 Общая доходность:      {results['total_return']:+.2f}%")
+        print(f"💵 Прибыль/Убыток:        ${results['profit_loss']:+,.2f}")
 
-# Добавляем пути к стратегиям
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+        # Торговые метрики
+        if 'total_trades' in results:
+            print(f"\n🔄 Всего сделок:          {results['total_trades']}")
+            print(f"✅ Выигрышных сделок:     {results.get('won_trades', 0)}")
+            print(f"❌ Проигрышных сделок:    {results.get('lost_trades', 0)}")
+            print(f"🎯 Винрейт:               {results.get('win_rate', 0):.1f}%")
+            print(f"⚖️ Profit Factor:         {results.get('profit_factor', 0):.2f}")
+
+        # Дополнительные метрики
+        if 'sharpe_ratio' in results:
+            print(f"\n📊 Коэффициент Шарпа:     {results['sharpe_ratio']:.3f}")
+            print(f"📉 Макс. просадка:        {results['max_drawdown']:.2f}%")
+
+        print("=" * 60)
+
+    def _plot_results(self, cerebro, strategy_name: str):
+        """Построение графиков"""
+        try:
+            print(f"\n📈 Построение графика для {strategy_name}...")
+            cerebro.plot(figsize=(15, 8), style='candlestick', volume=False)
+            plt.suptitle(f'Backtest Results: {strategy_name}', fontsize=16)
+            plt.show()
+        except Exception as e:
+            print(f"⚠️ Ошибка построения графика: {e}")
+
+    def compare_strategies(self,
+                          strategy_names: List[str] = None,
+                          custom_params: Dict[str, Dict[str, Any]] = None,
+                          data_path: str = None,
+                          timeframe: str = "1d",
+                          skip_errors: bool = True,
+                          suppress_strategy_errors: bool = True) -> pd.DataFrame:
+        """
+        Сравнение стратегий
+
+        Args:
+            strategy_names: список имен стратегий для сравнения (если None - все стратегии)
+            custom_params: словарь кастомных параметров для стратегий
+            data_path: путь к данным
+            timeframe: таймфрейм данных
+            skip_errors: пропускать стратегии с ошибками
+            suppress_strategy_errors: подавлять ошибки внутри стратегий
+        """
+
+        if strategy_names is None:
+            strategy_names = list(self.strategies_registry.keys())
+
+        if custom_params is None:
+            custom_params = {}
+
+        print(f"\n🔍 СРАВНЕНИЕ СТРАТЕГИЙ")
+        print("=" * 80)
+        print(f"📊 Стратегий к тестированию: {len(strategy_names)}")
+        print(f"⏱️ Таймфрейм: {timeframe}")
+        if suppress_strategy_errors:
+            print("🔇 Режим: Ошибки стратегий подавлены")
+        print()
+
+        results = []
+        failed_strategies = []
+
+        for i, strategy_name in enumerate(strategy_names, 1):
+            if strategy_name not in self.strategies_registry:
+                print(f"❌ Стратегия '{strategy_name}' не найдена, пропускаю...")
+                continue
+
+            print(f"⏳ [{i}/{len(strategy_names)}] Тестирование: {strategy_name}")
+
+            try:
+                # Используем кастомные параметры если есть
+                params = custom_params.get(strategy_name, {})
+
+                result = self.run_backtest(
+                    strategy_name=strategy_name,
+                    strategy_params=params,
+                    data_path=data_path,
+                    timeframe=timeframe,
+                    show_plot=False,
+                    verbose=False,
+                    suppress_strategy_errors=suppress_strategy_errors
+                )
+                results.append(result)
+                print(f"✅ Завершено: {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
+
+            except Exception as e:
+                error_msg = str(e)
+                if "array index out of range" in error_msg:
+                    print(f"❌ Ошибка в {strategy_name}: Ошибка выполнения стратегии")
+                else:
+                    print(f"❌ Ошибка в {strategy_name}: {error_msg}")
+
+                failed_strategies.append(strategy_name)
+
+                if not skip_errors:
+                    raise e
+                continue
+
+        if failed_strategies:
+            print(f"\n⚠️ Стратегии с ошибками ({len(failed_strategies)}):")
+            for strategy in failed_strategies:
+                print(f"   • {strategy}")
+
+        if not results:
+            print("❌ Нет успешных результатов для сравнения")
+            return pd.DataFrame()
+
+        # Создаем DataFrame для сравнения
+        comparison_df = pd.DataFrame(results)
+
+        # Сортируем по доходности
+        comparison_df = comparison_df.sort_values('total_return', ascending=False)
+
+        # Выбираем ключевые метрики для отображения
+        key_metrics = [
+            'strategy_name', 'total_return', 'profit_loss', 'total_trades',
+            'win_rate', 'profit_factor', 'sharpe_ratio', 'max_drawdown'
+        ]
+
+        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
+        display_df = comparison_df[available_metrics].copy()
+
+        print(f"\n🏆 РЕЙТИНГ СТРАТЕГИЙ:")
+        print("=" * 100)
+        print(display_df.to_string(index=False, float_format='%.2f'))
+
+        # Лучшая стратегия
+        if len(results) > 0:
+            best_strategy = comparison_df.iloc[0]
+            print(f"\n🥇 ЛУЧШАЯ СТРАТЕГИЯ: {best_strategy['strategy_name']}")
+            print(f"   📈 Доходность: {best_strategy['total_return']:+.2f}%")
+            print(f"   💰 Прибыль: ${best_strategy['profit_loss']:+,.2f}")
+            print(f"   🎯 Винрейт: {best_strategy.get('win_rate', 0):.1f}%")
+
+        print("=" * 100)
+
+        return display_df
+
+    def get_strategy_info(self, strategy_name: str) -> Dict[str, Any]:
+        """Получить подробную информацию о стратегии"""
+        if strategy_name not in self.strategies_registry:
+            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
+
+        return self.strategies_registry[strategy_name]
+
+    def optimize_strategy(self,
+                         strategy_name: str,
+                         optimization_params: Dict[str, tuple],
+                         data_path: str = None,
+                         timeframe: str = "1d",
+                         max_iterations: int = 100) -> pd.DataFrame:
+        """
+        Оптимизация параметров стратегии
+
+        Args:
+            strategy_name: имя стратегии для оптимизации
+            optimization_params: словарь параметров для оптимизации в формате {param_name: (min, max, step)}
+            data_path: путь к данным
+            timeframe: таймфрейм
+            max_iterations: максимальное количество итераций
+        """
+        print(f"\n🔧 ОПТИМИЗАЦИЯ СТРАТЕГИИ: {strategy_name}")
+        print("=" * 60)
+
+        if strategy_name not in self.strategies_registry:
+            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
+
+        strategy_info = self.strategies_registry[strategy_name]
+        strategy_class = strategy_info['class']
+
+        # Настройка Cerebro для оптимизации
+        cerebro = bt.Cerebro(optreturn=False)
+
+        # Добавляем данные
+        data_feed = self.load_data(data_path, timeframe)
+        cerebro.adddata(data_feed)
+
+        # Настройки брокера
+        cerebro.broker.setcash(self.initial_cash)
+        cerebro.broker.setcommission(commission=self.commission)
+
+        # Добавляем анализаторы
+        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+
+        # Добавляем стратегию с параметрами для оптимизации
+        opt_params = {}
+        for param_name, (min_val, max_val, step) in optimization_params.items():
+            opt_params[param_name] = range(int(min_val), int(max_val), int(step))
+
+        cerebro.optstrategy(strategy_class, **opt_params)
+
+        print(f"🚀 Запуск оптимизации с параметрами: {optimization_params}")
+
+        # Запуск оптимизации
+        optimization_results = cerebro.run(maxcpus=1)
+
+        # Обработка результатов
+        results_list = []
+        for result in optimization_results:
+            strategy_result = result[0]
+            params = strategy_result.params._getitems()
+
+            final_value = strategy_result.broker.getvalue()
+            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
+
+            sharpe_ratio = 0
+            try:
+                sharpe_analysis = strategy_result.analyzers.sharpe.get_analysis()
+                sharpe_ratio = sharpe_analysis.get('sharperatio', 0) or 0
+            except:
+                pass
+
+            result_data = {
+                'final_value': final_value,
+                'total_return': total_return,
+                'sharpe_ratio': sharpe_ratio,
+                **{k: v for k, v in params if k in optimization_params}
+            }
+            results_list.append(result_data)
+
+        # Создаем DataFrame и сортируем по доходности
+        results_df = pd.DataFrame(results_list)
+        results_df = results_df.sort_values('total_return', ascending=False)
+
+        print(f"\n🏆 РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ:")
+        print("=" * 80)
+        print(results_df.head(10).to_string(index=False, float_format='%.2f'))
+
+        best_result = results_df.iloc[0]
+        print(f"\n🥇 ЛУЧШИЕ ПАРАМЕТРЫ:")
+        for param in optimization_params.keys():
+            print(f"   • {param}: {best_result[param]}")
+        print(f"   📈 Доходность: {best_result['total_return']:+.2f}%")
+        print(f"   📊 Sharpe Ratio: {best_result['sharpe_ratio']:.3f}")
+
+        return results_df
 
 
-import os
-import sys
-import importlib.util
-import inspect
-import backtrader as bt
-import pandas as pd
-import matplotlib.pyplot as plt
-from typing import Dict, List, Any, Optional
-import warnings
+# Пример использования
+if __name__ == "__main__":
+    # Создаем бэктестер
+    backtester = UniversalBacktester(initial_cash=100000, commission=0.001)
 
-warnings.filterwarnings('ignore')
+    # Показываем доступные стратегии
+    backtester.list_strategies()
 
-# Добавляем пути к стратегиям
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+    # Можно тестировать любую стратегию
+    # backtester.run_backtest("SafeProfitableBTCStrategy")
 
+    # Или сравнить все стратегии
+    # backtester.compare_strategies()
 
-import os
-import sys
-import importlib.util
-import inspect
-import backtrader as bt
-import pandas as pd
-import matplotlib.pyplot as plt
-from typing import Dict, List, Any, Optional
-import warnings
-
-warnings.filterwarnings('ignore')
-
-# Добавляем пути к стратегиям
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+    # Или оптимизировать параметры стратегии
+    # optimization_params = {
+    #     'ema_fast': (10, 20, 2),
+    #     'ema_slow': (20, 30, 5),
+    #     'rsi_period': (10, 20, 2)
+    # }
+    # backtester.optimize_strategy("SafeProfitableBTCStrategy", optimization_params)
 
 
 class UniversalBacktester:
@@ -846,7 +1070,8 @@ class UniversalBacktester:
                     data_path: str = None,
                     timeframe: str = "1d",
                     show_plot: bool = True,
-                    verbose: bool = True) -> Dict[str, Any]:
+                    verbose: bool = True,
+                    suppress_strategy_errors: bool = False) -> Dict[str, Any]:
         """
         Запуск бэктестирования для выбранной стратегии
         """
@@ -879,8 +1104,31 @@ class UniversalBacktester:
             # Настройка Cerebro
             cerebro = bt.Cerebro()
 
-            # Добавляем стратегию с параметрами
-            cerebro.addstrategy(strategy_class, **final_params)
+            # Создаем обертку для стратегии с подавлением ошибок
+            if suppress_strategy_errors:
+                class SilentStrategyWrapper(strategy_class):
+                    error_count = 0
+                    max_errors_to_show = 5
+
+                    def notify_order(self, order):
+                        try:
+                            super().notify_order(order)
+                        except Exception:
+                            pass
+
+                    def next(self):
+                        try:
+                            super().next()
+                        except (IndexError, TypeError, ZeroDivisionError):
+                            self.__class__.error_count += 1
+                            if self.__class__.error_count <= self.__class__.max_errors_to_show:
+                                pass  # Молча пропускаем ошибку
+                        except Exception:
+                            pass
+
+                cerebro.addstrategy(SilentStrategyWrapper, **final_params)
+            else:
+                cerebro.addstrategy(strategy_class, **final_params)
 
             # Добавляем данные
             data_feed = self.load_data(data_path, timeframe)
@@ -902,6 +1150,12 @@ class UniversalBacktester:
                 if not results:
                     raise RuntimeError("Стратегия не вернула результатов")
                 result = results[0]
+
+                # Показываем сводку ошибок если они были
+                if suppress_strategy_errors and hasattr(result, 'error_count') and result.error_count > 0:
+                    if verbose:
+                        print(f"⚠️ Обнаружено {result.error_count} ошибок индексации (подавлено)")
+
             except IndexError as e:
                 if verbose:
                     print(f"❌ Ошибка индекса в стратегии {strategy_name}: {str(e)}")

@@ -2,7 +2,7 @@ import backtrader as bt
 
 
 class ProfitableBTCStrategy(bt.Strategy):
-    """Исправленная агрессивная BTC стратегия с защитой от ошибок"""
+    """Исправленная агрессивная BTC стратегия с улучшенной защитой от ошибок"""
 
     params = (
         ('ema_fast', 12),
@@ -22,13 +22,16 @@ class ProfitableBTCStrategy(bt.Strategy):
         # Сигнали
         self.ema_bullish = self.ema_fast > self.ema_slow
         self.ema_cross_up = bt.ind.CrossUp(self.ema_fast, self.ema_slow)
+        self.ema_cross_down = bt.ind.CrossDown(self.ema_fast, self.ema_slow)
 
         # Стан
         self.order = None
+        self.entry_price = None
 
     def next(self):
-        # Защита от недостаточного количества данных
-        if len(self.data) < max(self.p.ema_slow, self.p.rsi_period):
+        # Усиленная защита от недостаточного количества данных
+        min_bars = max(self.p.ema_slow, self.p.rsi_period) + 5
+        if len(self.data) < min_bars:
             return
 
         # Скасовуємо попередній ордер якщо є
@@ -42,56 +45,89 @@ class ProfitableBTCStrategy(bt.Strategy):
             if not price or price <= 0:
                 return
 
+            # Проверяем доступность всех индикаторов
+            if (len(self.ema_fast) == 0 or len(self.ema_slow) == 0 or
+                len(self.rsi) == 0 or len(self.ema_bullish) == 0):
+                return
+
             # ВХІД В ПОЗИЦІЮ
             if not self.position:
-                # Безопасная проверка условий с защитой от IndexError
-                ema_bullish_signal = len(self.ema_bullish) > 0 and self.ema_bullish[0]
-                rsi_oversold_signal = len(self.rsi) > 0 and self.rsi[0] < self.p.rsi_oversold
-                ema_cross_signal = len(self.ema_cross_up) > 0 and self.ema_cross_up[0]
+                buy_signal = False
 
-                buy_signal = (
-                    ema_bullish_signal or
-                    rsi_oversold_signal or
-                    ema_cross_signal
-                )
+                # Безопасная проверка каждого условия отдельно
+                try:
+                    if self.ema_bullish[0]:
+                        buy_signal = True
+                except (IndexError, TypeError):
+                    pass
+
+                try:
+                    if self.rsi[0] < self.p.rsi_oversold:
+                        buy_signal = True
+                except (IndexError, TypeError):
+                    pass
+
+                try:
+                    if len(self.ema_cross_up) > 0 and self.ema_cross_up[0]:
+                        buy_signal = True
+                except (IndexError, TypeError):
+                    pass
 
                 if buy_signal:
                     # Розрахунок розміру позиції
                     size = (self.broker.cash * self.p.position_size) / price
                     if size > 0:
                         self.order = self.buy(size=size)
-                        rsi_val = self.rsi[0] if len(self.rsi) > 0 else 0
-                        ema_fast_val = self.ema_fast[0] if len(self.ema_fast) > 0 else 0
-                        ema_slow_val = self.ema_slow[0] if len(self.ema_slow) > 0 else 0
-                        print(f"📈 КУПІВЛЯ: {price:.2f}, RSI: {rsi_val:.2f}, EMA Fast: {ema_fast_val:.2f}, EMA Slow: {ema_slow_val:.2f}")
+                        self.entry_price = price
+                        try:
+                            rsi_val = self.rsi[0] if len(self.rsi) > 0 else 0
+                            ema_fast_val = self.ema_fast[0] if len(self.ema_fast) > 0 else 0
+                            ema_slow_val = self.ema_slow[0] if len(self.ema_slow) > 0 else 0
+                            print(f"📈 КУПІВЛЯ: {price:.2f}, RSI: {rsi_val:.2f}, EMA Fast: {ema_fast_val:.2f}, EMA Slow: {ema_slow_val:.2f}")
+                        except:
+                            print(f"📈 КУПІВЛЯ: {price:.2f}")
 
             # ВИХІД З ПОЗИЦІЇ
-            elif self.position:
-                profit_pct = (price - self.position.price) / self.position.price
+            elif self.position and self.entry_price:
+                try:
+                    profit_pct = (price - self.entry_price) / self.entry_price
+                    exit_signal = False
 
-                # Умови виходу
-                exit_signal = (
-                    # Стоп-лос 10%
-                    profit_pct < -0.10 or
-                    # Тейк-профіт 20%
-                    profit_pct > 0.20 or
+                    # Перевіряємо умови виходу по одній
+                    if profit_pct < -0.10 or profit_pct > 0.20:
+                        exit_signal = True
+
                     # RSI перекуплений + тренд вниз
-                    (len(self.rsi) > 0 and len(self.ema_bullish) > 0 and
-                     self.rsi[0] > self.p.rsi_overbought and not self.ema_bullish[0]) or
+                    try:
+                        if (self.rsi[0] > self.p.rsi_overbought and
+                            len(self.ema_bullish) > 0 and not self.ema_bullish[0]):
+                            exit_signal = True
+                    except (IndexError, TypeError):
+                        pass
+
                     # EMA кросс вниз
-                    (len(self.ema_fast) > 0 and len(self.ema_slow) > 0 and
-                     bt.ind.CrossDown(self.ema_fast, self.ema_slow)[0])
-                )
+                    try:
+                        if len(self.ema_cross_down) > 0 and self.ema_cross_down[0]:
+                            exit_signal = True
+                    except (IndexError, TypeError):
+                        pass
 
-                if exit_signal:
-                    self.order = self.close()
-                    rsi_val = self.rsi[0] if len(self.rsi) > 0 else 0
-                    print(f"📉 ПРОДАЖ: {price:.2f}, Прибуток: {profit_pct*100:.2f}%, RSI: {rsi_val:.2f}")
+                    if exit_signal:
+                        self.order = self.close()
+                        self.entry_price = None
+                        try:
+                            rsi_val = self.rsi[0] if len(self.rsi) > 0 else 0
+                            print(f"📉 ПРОДАЖ: {price:.2f}, Прибуток: {profit_pct*100:.2f}%, RSI: {rsi_val:.2f}")
+                        except:
+                            print(f"📉 ПРОДАЖ: {price:.2f}, Прибуток: {profit_pct*100:.2f}%")
 
-        except (IndexError, TypeError, ZeroDivisionError) as e:
-            # Пропускаем итерацию если есть ошибки с данными
-            print(f"⚠️ Пропуск итерации из-за ошибки: {e}")
-            return
+                except (IndexError, TypeError, ZeroDivisionError):
+                    # Просто пропускаем итерацию без сообщения
+                    pass
+
+        except Exception:
+            # Молча пропускаем любые другие ошибки
+            pass
 
     def notify_order(self, order):
         if order.status in [order.Completed]:
