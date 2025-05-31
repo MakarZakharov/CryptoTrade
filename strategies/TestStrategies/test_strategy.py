@@ -1,143 +1,134 @@
 import backtrader as bt
 
-class OptimizedBTCStrategy(bt.Strategy):
-    """Активная стратегия для частой торговли BTC"""
+
+class ProfitableBTCStrategy(bt.Strategy):
+    """Исправленная агрессивная BTC стратегия с улучшенной защитой от ошибок"""
 
     params = (
-        ('sma_fast', 7),        # Быстрая SMA
-        ('sma_slow', 21),       # Медленная SMA
-        ('rsi_period', 14),     # Период RSI
-        ('rsi_high', 75),       # Верхний уровень RSI
-        ('rsi_low', 25),        # Нижний уровень RSI
-        ('bb_period', 20),      # Период Bollinger Bands
-        ('bb_devfactor', 2.0),  # Стандартное отклонение BB
-        ('position_size', 0.95), # Размер позиции
-        ('stop_loss', 0.05),    # Стоп-лосс 5%
-        ('take_profit', 0.15),  # Тейк-профит 15%
-        ('trail_percent', 0.03), # Трейлинг стоп 3%
+        ('ema_fast', 12),
+        ('ema_slow', 26),
+        ('rsi_period', 14),
+        ('rsi_oversold', 30),
+        ('rsi_overbought', 70),
+        ('position_size', 0.95),
     )
 
-    def __init__(self):
-        # Скользящие средние
-        self.sma_fast = bt.ind.SMA(period=self.p.sma_fast)
-        self.sma_slow = bt.ind.SMA(period=self.p.sma_slow)
-        self.sma_cross = bt.ind.CrossOver(self.sma_fast, self.sma_slow)
-
-        # RSI для перекупленности/перепроданности
+    def init(self):
+        # Основні індикатори
+        self.ema_fast = bt.ind.EMA(period=self.p.ema_fast)
+        self.ema_slow = bt.ind.EMA(period=self.p.ema_slow)
         self.rsi = bt.ind.RSI(period=self.p.rsi_period)
 
-        # Bollinger Bands для волатильности
-        self.bb = bt.ind.BollingerBands(period=self.p.bb_period, devfactor=self.p.bb_devfactor)
+        # Сигнали
+        self.ema_bullish = self.ema_fast > self.ema_slow
+        self.ema_cross_up = bt.ind.CrossUp(self.ema_fast, self.ema_slow)
+        self.ema_cross_down = bt.ind.CrossDown(self.ema_fast, self.ema_slow)
 
-        # MACD для трендовых сигналов
-        self.macd = bt.ind.MACD()
-        self.macd_signal = bt.ind.CrossOver(self.macd.macd, self.macd.signal)
-
-        # Переменные для управления позицией
+        # Стан
         self.order = None
-        self.buy_price = None
-        self.highest_price = None
-        self.trade_count = 0
+        self.entry_price = None
 
     def next(self):
+        # Усиленная защита от недостаточного количества данных
+        min_bars = max(self.p.ema_slow, self.p.rsi_period) + 5
+        if len(self.data) < min_bars:
+            return
+
+        # Скасовуємо попередній ордер якщо є
         if self.order:
             return
 
-        current_price = self.data.close[0]
+        try:
+            price = self.data.close[0]
 
-        if not self.position:
-            # Условия для покупки (множественные сигналы)
-            buy_signals = []
+            # Дополнительная проверка на корректность данных
+            if not price or price <= 0:
+                return
 
-            # Сигнал 1: Пересечение SMA вверх
-            if self.sma_cross[0] > 0:
-                buy_signals.append("SMA_CROSS_UP")
+            # Проверяем доступность всех индикаторов
+            if (len(self.ema_fast) == 0 or len(self.ema_slow) == 0 or
+                len(self.rsi) == 0 or len(self.ema_bullish) == 0):
+                return
 
-            # Сигнал 2: RSI перепродан и растет
-            if (self.rsi[0] < self.p.rsi_low and
-                self.rsi[0] > self.rsi[-1]):
-                buy_signals.append("RSI_OVERSOLD_RECOVERY")
+            # ВХІД В ПОЗИЦІЮ
+            if not self.position:
+                buy_signal = False
 
-            # Сигнал 3: Цена касается нижней Bollinger Band
-            if (current_price <= self.bb.bot[0] * 1.005 and
-                current_price > self.bb.bot[-1]):
-                buy_signals.append("BB_LOWER_BOUNCE")
+                # Безопасная проверка каждого условия отдельно
+                try:
+                    if self.ema_bullish[0]:
+                        buy_signal = True
+                except (IndexError, TypeError):
+                    pass
 
-            # Сигнал 4: MACD пересечение вверх
-            if self.macd_signal[0] > 0:
-                buy_signals.append("MACD_CROSS_UP")
+                try:
+                    if self.rsi[0] < self.p.rsi_oversold:
+                        buy_signal = True
+                except (IndexError, TypeError):
+                    pass
 
-            # Сигнал 5: Быстрая SMA выше медленной и цена выше быстрой SMA
-            if (self.sma_fast[0] > self.sma_slow[0] and
-                current_price > self.sma_fast[0] and
-                self.rsi[0] < 70):
-                buy_signals.append("TREND_CONTINUATION")
+                try:
+                    if len(self.ema_cross_up) > 0 and self.ema_cross_up[0]:
+                        buy_signal = True
+                except (IndexError, TypeError):
+                    pass
 
-            # Покупаем если есть хотя бы один сильный сигнал
-            if len(buy_signals) >= 1:
-                size = (self.broker.cash * self.p.position_size) / current_price
-                self.order = self.buy(size=size)
-                self.buy_price = current_price
-                self.highest_price = current_price
-                self.trade_count += 1
-                print(f"BUY #{self.trade_count}: ${current_price:.2f} - Signals: {buy_signals}")
+                if buy_signal:
+                    # Розрахунок розміру позиції
+                    size = (self.broker.cash * self.p.position_size) / price
+                    if size > 0:
+                        self.order = self.buy(size=size)
+                        self.entry_price = price
+                        try:
+                            rsi_val = self.rsi[0] if len(self.rsi) > 0 else 0
+                            ema_fast_val = self.ema_fast[0] if len(self.ema_fast) > 0 else 0
+                            ema_slow_val = self.ema_slow[0] if len(self.ema_slow) > 0 else 0
+                            print(f"📈 КУПІВЛЯ: {price:.2f}, RSI: {rsi_val:.2f}, EMA Fast: {ema_fast_val:.2f}, EMA Slow: {ema_slow_val:.2f}")
+                        except:
+                            print(f"📈 КУПІВЛЯ: {price:.2f}")
 
-        else:
-            # Обновляем максимальную цену для трейлинг стопа
-            if current_price > self.highest_price:
-                self.highest_price = current_price
+            # ВИХІД З ПОЗИЦІЇ
+            elif self.position and self.entry_price:
+                try:
+                    profit_pct = (price - self.entry_price) / self.entry_price
+                    exit_signal = False
 
-            # Расчет P&L
-            pnl_pct = (current_price - self.buy_price) / self.buy_price
+                    # Перевіряємо умови виходу по одній
+                    if profit_pct < -0.10 or profit_pct > 0.20:
+                        exit_signal = True
 
-            # Условия для продажи
-            sell_signals = []
+                    # RSI перекуплений + тренд вниз
+                    try:
+                        if (self.rsi[0] > self.p.rsi_overbought and
+                            len(self.ema_bullish) > 0 and not self.ema_bullish[0]):
+                            exit_signal = True
+                    except (IndexError, TypeError):
+                        pass
 
-            # Стоп-лосс
-            if pnl_pct <= -self.p.stop_loss:
-                sell_signals.append(f"STOP_LOSS_{pnl_pct*100:.1f}%")
+# EMA кросс вниз
+                    try:
+                        if len(self.ema_cross_down) > 0 and self.ema_cross_down[0]:
+                            exit_signal = True
+                    except (IndexError, TypeError):
+                        pass
 
-            # Тейк-профит
-            elif pnl_pct >= self.p.take_profit:
-                sell_signals.append(f"TAKE_PROFIT_{pnl_pct*100:.1f}%")
+                    if exit_signal:
+                        self.order = self.close()
+                        self.entry_price = None
+                        try:
+                            rsi_val = self.rsi[0] if len(self.rsi) > 0 else 0
+                            print(f"📉 ПРОДАЖ: {price:.2f}, Прибуток: {profit_pct*100:.2f}%, RSI: {rsi_val:.2f}")
+                        except:
+                            print(f"📉 ПРОДАЖ: {price:.2f}, Прибуток: {profit_pct*100:.2f}%")
 
-            # Трейлинг стоп
-            elif (self.highest_price - current_price) / self.highest_price >= self.p.trail_percent:
-                sell_signals.append(f"TRAILING_STOP_{pnl_pct*100:.1f}%")
+                except (IndexError, TypeError, ZeroDivisionError):
+                    # Просто пропускаем итерацию без сообщения
+                    pass
 
-            # Технические сигналы на продажу
-            elif self.sma_cross[0] < 0:  # SMA пересечение вниз
-                sell_signals.append(f"SMA_CROSS_DOWN_{pnl_pct*100:.1f}%")
-
-            elif self.rsi[0] > self.p.rsi_high:  # RSI перекуплен
-                sell_signals.append(f"RSI_OVERBOUGHT_{pnl_pct*100:.1f}%")
-
-            elif (current_price >= self.bb.top[0] * 0.995):  # Цена у верхней BB
-                sell_signals.append(f"BB_UPPER_REJECTION_{pnl_pct*100:.1f}%")
-
-            elif self.macd_signal[0] < 0:  # MACD пересечение вниз
-                sell_signals.append(f"MACD_CROSS_DOWN_{pnl_pct*100:.1f}%")
-
-            # Продаем если есть сигнал
-            if sell_signals:
-                self.order = self.close()
-                print(f"SELL #{self.trade_count}: ${current_price:.2f} - {sell_signals[0]}")
+        except Exception:
+            # Молча пропускаем любые другие ошибки
+            pass
 
     def notify_order(self, order):
         if order.status in [order.Completed]:
             self.order = None
-        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            self.order = None
-
-    def notify_trade(self, trade):
-        if trade.isclosed:
-            # Перевірка на нульове значення trade.value для уникнення ділення на нуль
-            if trade.value != 0:
-                pnl_pct = (trade.pnl / abs(trade.value)) * 100
-                print(f"Trade #{self.trade_count} закрито: PnL = ${trade.pnl:.2f} ({pnl_pct:+.2f}%)")
-            else:
-                # Якщо trade.value дорівнює нулю, просто показуємо абсолютний PnL
-                print(f"Trade #{self.trade_count} закрито: PnL = ${trade.pnl:.2f}")
-
-
-

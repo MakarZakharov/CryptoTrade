@@ -229,6 +229,26 @@ class BacktestRunner:
             print(f"Ошибка при построении графиков: {e}")
 
 
+"""
+Main function to run backtesting for high-yield trading strategies.
+
+This function performs the following key tasks:
+- Loads historical price data for BTCUSDT from a CSV file
+- Tests multiple trading strategies with different configurations
+- Evaluates and compares strategy performance
+- Identifies the best-performing strategy
+- Runs a detailed backtest and visualization for the top strategy
+
+The function uses parallel execution to test strategies and includes:
+- Performance tracking
+- Strategy comparison
+- Result saving to database
+- Performance metrics calculation
+- Strategy performance visualization
+
+Returns:
+    None: Prints results and plots strategy performance
+"""
 def main() -> None:
     """
     Основная функция для запуска бэктеста с CSV данными
@@ -366,7 +386,7 @@ def main() -> None:
         print("⚠️  Цель не достигнута. Рекомендации:")
         print("   - Попробуйте изменить параметры стратегий")
         print("   - Рассмотрите другие временные рамки")
-        print("   - Добавьте дополнительные фильтр4 ы")
+        print("   - Добавьте дополнительные фильтры")
 
     if best_strategy:
         print(f"\n📊 Запуск лучшей стратегии '{best_strategy}' с графиками...")
