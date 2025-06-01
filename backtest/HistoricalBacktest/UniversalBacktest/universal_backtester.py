@@ -5,22 +5,71 @@ import inspect
 import backtrader as bt
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Tuple
 import warnings
+import glob
+from collections import defaultdict
+import numpy as np
 
 warnings.filterwarnings('ignore')
 
-# Добавляем пути к стратегиям
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+
+class AdvancedSizer(bt.Sizer):
+    """Продвинутый сайзер с учетом риск-менеджмента"""
+    
+    params = (
+        ('position_size', 0.95),
+        ('max_risk_per_trade', 0.02),  # 2% риска на сделку
+        ('use_fixed_size', False),
+    )
+    
+    def _getsizing(self, comminfo, cash, data, isbuy):
+        if self.params.use_fixed_size:
+            # Фиксированный размер позиции
+            size = (cash * self.params.position_size) / data.close[0]
+        else:
+            # Размер на основе риска
+            size = (cash * self.params.max_risk_per_trade) / data.close[0]
+        
+        return int(size) if size > 0 else 0
+
+
+class EnhancedCommissionInfo(bt.CommInfoBase):
+    """Улучшенная комиссионная схема с учетом спреда и проскальзывания"""
+    
+    params = (
+        ('commission', 0.001),  # 0.1% комиссия
+        ('spread', 0.0005),     # 0.05% спред
+        ('slippage', 0.0002),   # 0.02% проскальзывание
+        ('margin', None),
+        ('mult', 1.0),
+        ('commtype', bt.CommInfoBase.COMM_PERC),
+    )
+
+    def _getcommission(self, size, price, pseudoexec):
+        """Расчет комиссии с учетом спреда и проскальзывания"""
+        # Базовая комиссия
+        commission = abs(size) * price * self.p.commission
+        
+        # Добавляем спред (на каждую сделку)
+        spread_cost = abs(size) * price * self.p.spread
+        
+        # Добавляем проскальзывание
+        slippage_cost = abs(size) * price * self.p.slippage
+        
+        total_cost = commission + spread_cost + slippage_cost
+        
+        return total_cost
 
 
 class SilentStrategyWrapper:
-    """Обертка для подавления ошибок в стратегиях"""
+    """Wrapper для подавления ошибок стратегии"""
 
     @classmethod
     def wrap_strategy(cls, strategy_class):
-        """Создает обертку для стратегии с подавлением ошибок"""
-
+        """Создает wrapper для стратегии с подавлением ошибок"""
+        
         class WrappedStrategy(strategy_class):
             error_count = 0
             max_errors_to_show = 5
@@ -34,7 +83,7 @@ class SilentStrategyWrapper:
             def next(self):
                 try:
                     super().next()
-                except (IndexError, TypeError, ZeroDivisionError):
+                except (IndexError, TypeError, ZeroDivisionError, KeyError):
                     self.__class__.error_count += 1
                 except Exception:
                     pass
@@ -42,40 +91,285 @@ class SilentStrategyWrapper:
         return WrappedStrategy
 
 
-class UniversalBacktester:
-    """Универсальный бэктестер с автоматическим определением параметров стратегий"""
+class DataManager:
+    """Менеджер данных для автоматического поиска и загрузки данных"""
+    
+    def __init__(self, data_root_path: str = None):
+        self.data_root_path = data_root_path or self._find_data_root()
+        self.available_data = self._scan_available_data()
+    
+    def _find_data_root(self) -> str:
+        """Автоматический поиск корневой папки данных"""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        possible_paths = [
+            os.path.join(current_dir, '../../../data'),
+            os.path.join(current_dir, '../../data'),
+            os.path.join(current_dir, '../data'),
+            os.path.join(current_dir, 'data'),
+            os.path.join(current_dir.split('CryptoTrade')[0], 'CryptoTrade', 'data'),
+        ]
+        
+        for path in possible_paths:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path):
+                return abs_path
+        
+        raise FileNotFoundError("Папка с данными не найдена")
+    
+    def _scan_available_data(self) -> Dict[str, Dict[str, List[str]]]:
+        """Сканирование доступных данных"""
+        data_structure = defaultdict(lambda: defaultdict(list))
+        
+        if not os.path.exists(self.data_root_path):
+            return dict(data_structure)
+        
+        for exchange in os.listdir(self.data_root_path):
+            exchange_path = os.path.join(self.data_root_path, exchange)
+            if not os.path.isdir(exchange_path):
+                continue
+                
+            for symbol in os.listdir(exchange_path):
+                symbol_path = os.path.join(exchange_path, symbol)
+                if not os.path.isdir(symbol_path):
+                    continue
+                    
+                for timeframe in os.listdir(symbol_path):
+                    timeframe_path = os.path.join(symbol_path, timeframe)
+                    if not os.path.isdir(timeframe_path):
+                        continue
+                    
+                    # Поиск CSV файлов
+                    csv_files = glob.glob(os.path.join(timeframe_path, "*.csv"))
+                    if csv_files:
+                        key = f"{exchange}_{symbol}_{timeframe}"
+                        data_structure[exchange][symbol].extend([
+                            {
+                                'timeframe': timeframe,
+                                'files': csv_files,
+                                'key': key
+                            }
+                        ])
+        
+        return dict(data_structure)
+    
+    def list_available_data(self):
+        """Вывод списка доступных данных"""
+        print("\n📊 ДОСТУПНЫЕ ДАННЫЕ:")
+        print("=" * 80)
+        
+        total_datasets = 0
+        for exchange, symbols in self.available_data.items():
+            print(f"\n📈 Биржа: {exchange.upper()}")
+            print("-" * 40)
+            
+            for symbol, timeframe_data in symbols.items():
+                print(f"  💰 {symbol}:")
+                for tf_info in timeframe_data:
+                    file_count = len(tf_info['files'])
+                    print(f"    ⏰ {tf_info['timeframe']} ({file_count} файл(ов))")
+                    total_datasets += file_count
+        
+        print(f"\n📊 Всего наборов данных: {total_datasets}")
+        print("=" * 80)
+    
+    def get_data_path(self, exchange: str, symbol: str, timeframe: str, 
+                     start_date: str = None, end_date: str = None) -> str:
+        """Получение пути к данным"""
+        if exchange not in self.available_data:
+            raise ValueError(f"Биржа {exchange} не найдена")
+        
+        if symbol not in self.available_data[exchange]:
+            raise ValueError(f"Символ {symbol} не найден для биржи {exchange}")
+        
+        # Поиск нужного таймфрейма
+        for tf_info in self.available_data[exchange][symbol]:
+            if tf_info['timeframe'] == timeframe:
+                # Если указаны даты, ищем подходящий файл
+                if start_date or end_date:
+                    return self._find_file_by_date_range(tf_info['files'], start_date, end_date)
+                else:
+                    # Возвращаем первый доступный файл
+                    return tf_info['files'][0]
+        
+        raise ValueError(f"Таймфрейм {timeframe} не найден для {exchange}:{symbol}")
+    
+    def _find_file_by_date_range(self, files: List[str], start_date: str, end_date: str) -> str:
+        """Поиск файла по диапазону дат"""
+        # Простая реализация - возвращаем первый файл
+        # В реальности здесь можно анализировать имена файлов
+        if files:
+            return files[0]
+        raise FileNotFoundError("Файлы данных не найдены")
+    
+    def load_data(self, exchange: str, symbol: str, timeframe: str,
+                 start_date: str = None, end_date: str = None) -> bt.feeds.PandasData:
+        """Загрузка данных в формате BackTrader"""
+        file_path = self.get_data_path(exchange, symbol, timeframe, start_date, end_date)
+        
+        # Загрузка CSV
+        df = pd.read_csv(file_path)
+        
+        # Обработка данных
+        df = self._process_dataframe(df, start_date, end_date)
 
-    def __init__(self, initial_cash: float = 100000, commission: float = 0.001):
+        # Создание feed для BackTrader - используем index как datetime
+        data_feed = bt.feeds.PandasData(
+            dataname=df,
+            datetime=None,  # Используем индекс как datetime
+            open='open',
+            high='high',
+            low='low',
+            close='close',
+            volume='volume',
+            openinterest=-1
+        )
+        
+        return data_feed
+    
+    def _process_dataframe(self, df: pd.DataFrame, start_date: str = None, 
+                          end_date: str = None) -> pd.DataFrame:
+        """Обработка DataFrame"""
+        # Конвертация времени
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Фильтрация по датам
+        if start_date:
+            df = df[df['timestamp'] >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df['timestamp'] <= pd.to_datetime(end_date)]
+        
+        # Установка индекса
+        df.set_index('timestamp', inplace=True)
+        
+        # Проверка и очистка данных
+        df = df.dropna()
+        df = df[(df[['open', 'high', 'low', 'close']] > 0).all(axis=1)]
+        
+        # Добавление volume если отсутствует
+        if 'volume' not in df.columns:
+            df['volume'] = 1000
+        
+        # Сортировка по индексу (времени)
+        df.sort_index(inplace=True)
+
+        return df
+
+
+class UniversalBacktester:
+    """Универсальный бэктестер с расширенным функционалом"""
+
+    def __init__(self, 
+                 initial_cash: float = 100000,
+                 commission: float = 0.001,
+                 spread: float = 0.0005,
+                 slippage: float = 0.0002,
+                 data_root_path: str = None):
+        
         self.initial_cash = initial_cash
         self.commission = commission
+        self.spread = spread
+        self.slippage = slippage
+        
+        # Менеджеры
+        self.data_manager = DataManager(data_root_path)
         self.strategies_registry = {}
-        self.data_cache = {}
-
+        
         print("🔍 Инициализация универсального бэктестера...")
         self._discover_strategies()
-    
+
     def _discover_strategies(self):
-        """Автоматическое обнаружение всех стратегий"""
-        strategies_path = os.path.join(os.path.dirname(__file__), '../../strategies/TestStrategies/')
+        """Автоматическое обнаружение стратегий"""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
         
-        if not os.path.exists(strategies_path):
-            print(f"⚠️ Папка стратегий не найдена: {strategies_path}")
+        possible_paths = [
+            os.path.join(current_dir, '../../../strategies/TestStrategies/'),
+            os.path.join(current_dir, '../../strategies/TestStrategies/'),
+            os.path.join(current_dir, '../strategies/TestStrategies/'),
+            os.path.join(current_dir, 'strategies/TestStrategies/'),
+            os.path.join(current_dir.split('CryptoTrade')[0], 'CryptoTrade', 'strategies', 'TestStrategies'),
+        ]
+
+        strategies_path = None
+        for path in possible_paths:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path) and os.path.isdir(abs_path):
+                strategies_path = abs_path
+                break
+
+        if not strategies_path:
+            print(f"⚠️ Папка стратегий не найдена")
             return
 
-        print(f"📁 Сканирую папку: {strategies_path}")
+        print(f"📁 Сканирую стратегии: {strategies_path}")
+        
+        if strategies_path not in sys.path:
+            sys.path.insert(0, strategies_path)
 
+        strategies_found = 0
         for filename in os.listdir(strategies_path):
             if filename.endswith('.py') and not filename.startswith('__'):
-                self._load_strategies_from_module(filename[:-3], strategies_path)
+                module_name = filename[:-3]
+                found_count = self._load_strategies_from_module(module_name, strategies_path)
+                strategies_found += found_count
+
+        print(f"✅ Загружено стратегий: {strategies_found}")
+
+    def _load_strategies_from_module(self, module_name: str, module_path: str) -> int:
+        """Загрузка стратегий из модуля"""
+        strategies_loaded = 0
+        
+        try:
+            spec = importlib.util.spec_from_file_location(
+                module_name, os.path.join(module_path, f"{module_name}.py"))
+            
+            if spec is None or spec.loader is None:
+                return 0
+                
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+            for name, obj in inspect.getmembers(module):
+                if self._is_strategy_class(obj):
+                    try:
+                        default_params = self._extract_strategy_params(obj)
+                        
+                        unique_key = f"{name}_{module_name}" if name in self.strategies_registry else name
+                        
+                        self.strategies_registry[unique_key] = {
+                            'class': obj,
+                            'module': module_name,
+                            'file': f"{module_name}.py",
+                            'default_params': default_params,
+                            'description': self._clean_docstring(obj.__doc__) or f"Стратегия {name}",
+                            'original_name': name
+                        }
+                        strategies_loaded += 1
+                        print(f"✅ {name} (параметров: {len(default_params)})")
+
+                    except Exception as e:
+                        print(f"⚠️ Ошибка загрузки {name}: {e}")
+
+        except Exception as e:
+            print(f"❌ Ошибка модуля {module_name}: {e}")
+
+        return strategies_loaded
 
     def _is_strategy_class(self, obj) -> bool:
-        """Проверка класса стратегии"""
-        return (inspect.isclass(obj) and issubclass(obj, bt.Strategy) and
-                obj != bt.Strategy and not obj.__name__.startswith('_'))
+        """Проверка является ли объект классом стратегии"""
+        return (
+            inspect.isclass(obj) and
+            issubclass(obj, bt.Strategy) and
+            obj != bt.Strategy and
+            not obj.__name__.startswith('_') and
+            hasattr(obj, '__module__')
+        )
 
     def _extract_strategy_params(self, strategy_class) -> Dict[str, Any]:
         """Извлечение параметров стратегии"""
         default_params = {}
+        
         if not hasattr(strategy_class, 'params'):
             return default_params
 
@@ -83,246 +377,548 @@ class UniversalBacktester:
         if params_attr is None:
             return default_params
 
-        # Универсальная обработка разных форматов params
-        if isinstance(params_attr, (tuple, list)):
-            for param in params_attr:
-                if isinstance(param, tuple) and len(param) >= 2:
-                    name, value = param[0], param[1]
+        try:
+            if isinstance(params_attr, (tuple, list)):
+                for param in params_attr:
+                    if isinstance(param, tuple) and len(param) >= 2:
+                        name, value = param[0], param[1]
+                        if self._is_valid_param(name, value):
+                            default_params[name] = value
+            
+            elif isinstance(params_attr, dict):
+                for name, value in params_attr.items():
                     if self._is_valid_param(name, value):
                         default_params[name] = value
-        elif isinstance(params_attr, dict):
-            for name, value in params_attr.items():
-                if self._is_valid_param(name, value):
-                    default_params[name] = value
-        elif hasattr(params_attr, '__dict__'):
-            for name in dir(params_attr):
-                if not name.startswith('_'):
-                    value = getattr(params_attr, name)
-                    if self._is_valid_param(name, value):
-                        default_params[name] = value
+            
+            elif hasattr(params_attr, '__dict__'):
+                for name in dir(params_attr):
+                    if not name.startswith('_'):
+                        value = getattr(params_attr, name)
+                        if self._is_valid_param(name, value):
+                            default_params[name] = value
+        
+        except Exception:
+            pass
+
         return default_params
 
     def _is_valid_param(self, name: str, value: Any) -> bool:
         """Проверка валидности параметра"""
-        return (not callable(value) and not name.startswith('_') and
-                name not in ['isdefault', 'notdefault'])
+        return (
+            not callable(value) and 
+            not name.startswith('_') and
+            name not in ['isdefault', 'notdefault'] and
+            not inspect.isclass(value)
+        )
 
-    def _load_strategies_from_module(self, module_name: str, module_path: str):
-        """Загрузка стратегий из модуля"""
-        try:
-            spec = importlib.util.spec_from_file_location(
-                module_name, os.path.join(module_path, f"{module_name}.py"))
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
+    def _clean_docstring(self, docstring: str) -> str:
+        """Очистка и форматирование docstring"""
+        if not docstring:
+            return ""
+        
+        lines = [line.strip() for line in docstring.strip().split('\n')]
+        cleaned = ' '.join(line for line in lines if line)
+        
+        if len(cleaned) > 100:
+            return cleaned[:97] + "..."
+        return cleaned
 
-            strategies_found = 0
-            for name, obj in inspect.getmembers(module):
-                if self._is_strategy_class(obj):
-                    try:
-                        default_params = self._extract_strategy_params(obj)
-
-                        self.strategies_registry[name] = {
-                            'class': obj, 'module': module_name, 'file': f"{module_name}.py",
-                            'default_params': default_params,
-                            'description': obj.__doc__ or f"Стратегия {name}"
-                        }
-                        strategies_found += 1
-                        print(f"✅ Найдена стратегия: {name} (файл: {module_name}.py, параметров: {len(default_params)})")
-
-                    except Exception as e:
-                        print(f"⚠️ Ошибка обработки стратегии {name}: {e}")
-            if strategies_found == 0:
-                print(f"⚠️ В файле {module_name}.py стратегии не найдены")
-
-        except Exception as e:
-            print(f"❌ Ошибка загрузки модуля {module_name}: {e}")
+    def list_available_options(self):
+        """Вывод всех доступных опций"""
+        print("\n🔍 УНИВЕРСАЛЬНЫЙ БЭКТЕСТЕР")
+        print("=" * 80)
+        
+        # Доступные данные
+        self.data_manager.list_available_data()
+        
+        # Доступные стратегии
+        self.list_strategies()
 
     def list_strategies(self):
-        """Показать все доступные стратегии"""
-        print("\n📋 ДОСТУПНЫЕ СТРАТЕГИИ:")
+        """Вывод доступных стратегий"""
+        print("\n🎯 ДОСТУПНЫЕ СТРАТЕГИИ:")
         print("=" * 80)
 
         if not self.strategies_registry:
             print("❌ Стратегии не найдены!")
             return
 
-        strategies_by_file = {}
-        for name, info in self.strategies_registry.items():
-            file_name = info['file']
-            if file_name not in strategies_by_file:
-                strategies_by_file[file_name] = []
-            strategies_by_file[file_name].append((name, info))
+        strategies_by_file = defaultdict(list)
+        for key, info in self.strategies_registry.items():
+            strategies_by_file[info['file']].append((key, info))
 
         for file_name, strategies in strategies_by_file.items():
             print(f"\n📄 Файл: {file_name}")
             print("-" * 60)
 
-            for i, (name, info) in enumerate(strategies, 1):
+            for i, (key, info) in enumerate(strategies, 1):
+                name = info['original_name']
                 print(f"   {i}. 🎯 {name}")
-                print(f"      📝 Описание: {info['description'][:80]}...")
+                print(f"      📝 {info['description']}")
 
                 if info['default_params']:
-                    print(f"      ⚙️ Параметры ({len(info['default_params'])}):")
+                    param_count = len(info['default_params'])
+                    print(f"      ⚙️ Параметры ({param_count}):")
+                    
                     for param_name, param_value in list(info['default_params'].items())[:5]:
                         print(f"         • {param_name}: {param_value}")
 
-                    if len(info['default_params']) > 5:
-                        print(f"         ... и еще {len(info['default_params']) - 5} параметров")
-                else:
-                    print(f"      ⚙️ Параметры: Нет настраиваемых параметров")
+                    if param_count > 5:
+                        print(f"         ... и еще {param_count - 5} параметров")
                 print()
 
-        print(f"📊 Всего найдено: {len(self.strategies_registry)} стратегий в {len(strategies_by_file)} файлах")
+        print(f"📊 Всего стратегий: {len(self.strategies_registry)}")
         print("=" * 80)
 
-    def load_data(self, data_path: str = None, timeframe: str = "1d") -> bt.feeds.PandasData:
-        """Загрузка данных"""
-        if data_path is None:
-            data_path = f"../../data/binance/BTCUSDT/{timeframe}/2018_01_01-2025_01_01.csv"
-
-        cache_key = f"{data_path}_{timeframe}"
-        if cache_key in self.data_cache:
-            return self.data_cache[cache_key]
-
-        full_path = os.path.join(os.path.dirname(__file__), data_path) if not os.path.isabs(data_path) else data_path
-        if not os.path.exists(full_path):
-            raise FileNotFoundError(f"Файл данных не найден: {full_path}")
-
-        df = pd.read_csv(full_path)
-
-        # Автоопределение колонок
-        column_mapping = {}
-        for col in df.columns:
-            col_lower = col.lower().strip()
-            if any(x in col_lower for x in ['timestamp', 'date', 'time']):
-                column_mapping[col] = 'datetime'
-            elif col_lower in ['o', 'open']: column_mapping[col] = 'open'
-            elif col_lower in ['h', 'high']: column_mapping[col] = 'high'
-            elif col_lower in ['l', 'low']: column_mapping[col] = 'low'
-            elif col_lower in ['c', 'close']: column_mapping[col] = 'close'
-            elif col_lower in ['v', 'volume', 'vol']: column_mapping[col] = 'volume'
-
-        df = df.rename(columns=column_mapping)
-
-        # Обработка времени
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'])
-            df.set_index('datetime', inplace=True)
-        elif 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df.set_index('timestamp', inplace=True)
-
-        required_cols = ['open', 'high', 'low', 'close']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            raise ValueError(f"Отсутствуют обязательные колонки: {missing_cols}")
-
-        if 'volume' not in df.columns:
-            df['volume'] = 1000
-
-        df = df[required_cols + ['volume']].dropna()
-        df = df[(df[required_cols] > 0).all(axis=1)]
-        df.sort_index(inplace=True)
+    def run_single_backtest(self,
+                           strategy_name: str,
+                           exchange: str = "binance",
+                           symbol: str = "BTCUSDT", 
+                           timeframe: str = "1d",
+                           start_date: str = None,
+                           end_date: str = None,
+                           strategy_params: Dict[str, Any] = None,
+                           show_plot: bool = True,
+                           verbose: bool = True,
+                           suppress_strategy_errors: bool = True) -> Dict[str, Any]:
+        """Запуск одиночного бэктеста"""
         
-        print(f"✅ Загружено {len(df)} записей из {os.path.basename(full_path)}")
-        data_feed = bt.feeds.PandasData(dataname=df)
-        self.data_cache[cache_key] = data_feed
-        return data_feed
-
-    def run_backtest(self, strategy_name: str, strategy_params: Dict[str, Any] = None,
-                    data_path: str = None, timeframe: str = "1d", show_plot: bool = True,
-                    verbose: bool = True, suppress_strategy_errors: bool = False) -> Dict[str, Any]:
-        """Запуск бэктестирования"""
         if strategy_name not in self.strategies_registry:
             available = list(self.strategies_registry.keys())
             raise ValueError(f"Стратегия '{strategy_name}' не найдена. Доступные: {available}")
-        
+
         strategy_info = self.strategies_registry[strategy_name]
         strategy_class = strategy_info['class']
+
+        # Объединение параметров
         final_params = strategy_info['default_params'].copy()
         if strategy_params:
             final_params.update(strategy_params)
 
         if verbose:
-            print(f"\n🚀 ЗАПУСК БЭКТЕСТА: {strategy_name}")
-            print("=" * 60)
-            print(f"💰 Начальный капитал: ${self.initial_cash:,}")
-            print(f"💸 Комиссия: {self.commission:.3f}")
-            print(f"📊 Таймфрейм: {timeframe}")
-            if final_params:
-                print(f"⚙️ Параметры:")
-                for param, value in final_params.items():
-                    print(f"   • {param}: {value}")
-            print()
+            self._print_backtest_header(strategy_name, exchange, symbol, timeframe, 
+                                      start_date, end_date, final_params)
 
         try:
+            # Создание Cerebro
             cerebro = bt.Cerebro()
 
-            # Создание стратегии
+            # Добавление стратегии
             if suppress_strategy_errors:
                 wrapped_class = SilentStrategyWrapper.wrap_strategy(strategy_class)
                 cerebro.addstrategy(wrapped_class, **final_params)
             else:
                 cerebro.addstrategy(strategy_class, **final_params)
 
-            cerebro.adddata(self.load_data(data_path, timeframe))
+            # Загрузка данных
+            data_feed = self.data_manager.load_data(exchange, symbol, timeframe, start_date, end_date)
+            cerebro.adddata(data_feed)
+
+            # Настройка брокера
             cerebro.broker.setcash(self.initial_cash)
-            cerebro.broker.setcommission(commission=self.commission)
+            
+            # Добавление улучшенной комиссионной схемы
+            comminfo = EnhancedCommissionInfo(
+                commission=self.commission,
+                spread=self.spread,
+                slippage=self.slippage
+            )
+            cerebro.broker.addcommissioninfo(comminfo)
 
-            # Анализаторы
-            cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
-            cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-            cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-            cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+            # Добавление продвинутого сайзера
+            cerebro.addsizer(AdvancedSizer)
 
-            try:
-                results = cerebro.run()
-                if not results:
-                    raise RuntimeError("Стратегия не вернула результатов")
-                result = results[0]
+            # Добавление анализаторов
+            self._add_analyzers(cerebro)
 
-                if (suppress_strategy_errors and hasattr(result, 'error_count') and
-                    result.error_count > 0 and verbose):
-                    print(f"⚠️ Обнаружено {result.error_count} ошибок индексации (подавлено)")
+            # Запуск бэктеста
+            results = cerebro.run()
+            if not results:
+                raise RuntimeError("Стратегия не вернула результатов")
+            
+            result = results[0]
 
-            except Exception as e:
-                if verbose:
-                    print(f"❌ Ошибка в стратегии {strategy_name}: {str(e)}")
-                raise RuntimeError(f"Ошибка выполнения стратегии: {str(e)}")
-
-            # Подготовка результатов
-            final_value = cerebro.broker.getvalue()
-            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
-
-            analysis_result = {
-                'strategy_name': strategy_name, 'initial_value': self.initial_cash,
-                'final_value': final_value, 'total_return': total_return,
-                'profit_loss': final_value - self.initial_cash, 'parameters': final_params
-            }
-
-            # Анализ сделок и метрик
-            try:
-                trades = result.analyzers.trades.get_analysis()
-                analysis_result.update(self._analyze_trades(trades) if trades else self._empty_trades())
-                analysis_result.update(self._detailed_analysis(result))
-            except Exception as e:
-                if verbose:
-                    print(f"⚠️ Ошибка анализа: {e}")
-                analysis_result.update(self._empty_trades())
-                analysis_result.update({'sharpe_ratio': 0, 'max_drawdown': 0})
+            # Обработка результатов
+            analysis_result = self._process_results(result, strategy_name, final_params, 
+                                                  exchange, symbol, timeframe)
 
             if verbose:
                 self._print_results(analysis_result)
+            
             if show_plot:
-                self._plot_results(cerebro, strategy_name)
+                self._plot_results(cerebro, strategy_name, exchange, symbol, timeframe)
 
             return analysis_result
 
         except Exception as e:
             if verbose:
-                print(f"❌ Ошибка выполнения стратегии {strategy_name}: {str(e)}")
-            raise e
+                print(f"❌ Ошибка выполнения: {str(e)}")
+            raise
+
+    def run_multi_data_backtest(self,
+                               strategy_name: str,
+                               data_configs: List[Dict[str, str]],
+                               strategy_params: Dict[str, Any] = None,
+                               show_individual_plots: bool = False,
+                               verbose: bool = True) -> pd.DataFrame:
+        """Запуск бэктеста на множественных данных"""
+        
+        print(f"\n🔍 МУЛЬТИ-ТЕСТ СТРАТЕГИИ: {strategy_name}")
+        print("=" * 80)
+        print(f"📊 Наборов данных: {len(data_configs)}")
+        print()
+
+        results = []
+        failed_tests = []
+
+        for i, config in enumerate(data_configs, 1):
+            exchange = config.get('exchange', 'binance')
+            symbol = config.get('symbol', 'BTCUSDT')
+            timeframe = config.get('timeframe', '1d')
+            start_date = config.get('start_date')
+            end_date = config.get('end_date')
+
+            test_name = f"{exchange}_{symbol}_{timeframe}"
+            print(f"⏳ [{i}/{len(data_configs)}] Тестирование на {test_name}")
+
+            try:
+                result = self.run_single_backtest(
+                    strategy_name=strategy_name,
+                    exchange=exchange,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_params=strategy_params,
+                    show_plot=show_individual_plots,
+                    verbose=False,
+                    suppress_strategy_errors=True
+                )
+                
+                result['test_name'] = test_name
+                result['exchange'] = exchange
+                result['symbol'] = symbol
+                result['timeframe'] = timeframe
+                
+                results.append(result)
+                print(f"✅ {test_name}: {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ {test_name}: {error_msg}")
+                failed_tests.append((test_name, error_msg))
+
+        if failed_tests:
+            print(f"\n⚠️ Неудачные тесты ({len(failed_tests)}):")
+            for test_name, error in failed_tests:
+                print(f"   • {test_name}: {error}")
+
+        if not results:
+            print("❌ Нет успешных результатов")
+            return pd.DataFrame()
+
+        # Создание сводной таблицы
+        comparison_df = pd.DataFrame(results).sort_values('total_return', ascending=False)
+        
+        key_metrics = [
+            'test_name', 'exchange', 'symbol', 'timeframe', 'total_return', 
+            'profit_loss', 'total_trades', 'win_rate', 'profit_factor', 
+            'sharpe_ratio', 'max_drawdown'
+        ]
+        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
+        display_df = comparison_df[available_metrics].copy()
+
+        print(f"\n🏆 РЕЗУЛЬТАТЫ МУЛЬТИ-ТЕСТА:")
+        print("=" * 120)
+        print(display_df.to_string(index=False, float_format='%.2f'))
+
+        # Статистика
+        if len(results) > 1:
+            avg_return = comparison_df['total_return'].mean()
+            std_return = comparison_df['total_return'].std()
+            best_test = comparison_df.iloc[0]
+            worst_test = comparison_df.iloc[-1]
+
+            print(f"\n📊 СТАТИСТИКА:")
+            print(f"   Средняя доходность: {avg_return:.2f}%")
+            print(f"   Стандартное отклонение: {std_return:.2f}%")
+            print(f"   🥇 Лучший тест: {best_test['test_name']} ({best_test['total_return']:+.2f}%)")
+            print(f"   🥉 Худший тест: {worst_test['test_name']} ({worst_test['total_return']:+.2f}%)")
+
+        print("=" * 120)
+        return display_df
+
+    def compare_strategies(self,
+                          strategy_names: List[str] = None,
+                          exchange: str = "binance",
+                          symbol: str = "BTCUSDT",
+                          timeframe: str = "1d",
+                          start_date: str = None,
+                          end_date: str = None,
+                          custom_params: Dict[str, Dict[str, Any]] = None,
+                          skip_errors: bool = True) -> pd.DataFrame:
+        """Сравнение множественных стратегий"""
+        
+        if strategy_names is None:
+            strategy_names = list(self.strategies_registry.keys())
+        
+        if custom_params is None:
+            custom_params = {}
+
+        print(f"\n🔍 СРАВНЕНИЕ СТРАТЕГИЙ")
+        print("=" * 80)
+        print(f"📊 Стратегий: {len(strategy_names)}")
+        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
+        if start_date or end_date:
+            print(f"📅 Период: {start_date or 'начало'} - {end_date or 'конец'}")
+        print()
+
+        results = []
+        failed_strategies = []
+
+        for i, strategy_name in enumerate(strategy_names, 1):
+            if strategy_name not in self.strategies_registry:
+                print(f"❌ Стратегия '{strategy_name}' не найдена")
+                continue
+
+            print(f"⏳ [{i}/{len(strategy_names)}] Тестирование: {strategy_name}")
+
+            try:
+                params = custom_params.get(strategy_name, {})
+                result = self.run_single_backtest(
+                    strategy_name=strategy_name,
+                    exchange=exchange,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_params=params,
+                    show_plot=False,
+                    verbose=False,
+                    suppress_strategy_errors=True
+                )
+                results.append(result)
+                print(f"✅ {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ Ошибка: {error_msg}")
+                failed_strategies.append(strategy_name)
+                
+                if not skip_errors:
+                    raise e
+
+        if failed_strategies:
+            print(f"\n⚠️ Стратегии с ошибками ({len(failed_strategies)}):")
+            for strategy in failed_strategies:
+                print(f"   • {strategy}")
+
+        if not results:
+            print("❌ Нет успешных результатов")
+            return pd.DataFrame()
+
+        # Создание таблицы сравнения
+        comparison_df = pd.DataFrame(results).sort_values('total_return', ascending=False)
+        
+        key_metrics = [
+            'strategy_name', 'total_return', 'profit_loss', 'total_trades',
+            'win_rate', 'profit_factor', 'sharpe_ratio', 'max_drawdown'
+        ]
+        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
+        display_df = comparison_df[available_metrics].copy()
+
+        print(f"\n🏆 РЕЙТИНГ СТРАТЕГИЙ:")
+        print("=" * 100)
+        print(display_df.to_string(index=False, float_format='%.2f'))
+
+        if len(results) > 0:
+            best_strategy = comparison_df.iloc[0]
+            print(f"\n🥇 ЛУЧШАЯ СТРАТЕГИЯ: {best_strategy['strategy_name']}")
+            print(f"   📈 Доходность: {best_strategy['total_return']:+.2f}%")
+            print(f"   💰 Прибыль: ${best_strategy['profit_loss']:+,.2f}")
+            print(f"   🎯 Винрейт: {best_strategy.get('win_rate', 0):.1f}%")
+
+        print("=" * 100)
+        return display_df
+
+    def optimize_strategy(self,
+                         strategy_name: str,
+                         optimization_params: Dict[str, tuple],
+                         exchange: str = "binance",
+                         symbol: str = "BTCUSDT",
+                         timeframe: str = "1d",
+                         start_date: str = None,
+                         end_date: str = None,
+                         max_iterations: int = 100) -> pd.DataFrame:
+        """Оптимизация параметров стратегии"""
+        
+        print(f"\n🔧 ОПТИМИЗАЦИЯ СТРАТЕГИИ: {strategy_name}")
+        print("=" * 60)
+        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
+        print(f"⚙️ Параметры оптимизации: {list(optimization_params.keys())}")
+
+        if strategy_name not in self.strategies_registry:
+            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
+
+        strategy_info = self.strategies_registry[strategy_name]
+        strategy_class = strategy_info['class']
+
+        # Настройка Cerebro для оптимизации
+        cerebro = bt.Cerebro(optreturn=False)
+        
+        # Загрузка данных
+        data_feed = self.data_manager.load_data(exchange, symbol, timeframe, start_date, end_date)
+        cerebro.adddata(data_feed)
+        
+        # Настройка брокера
+        cerebro.broker.setcash(self.initial_cash)
+        comminfo = EnhancedCommissionInfo(
+            commission=self.commission,
+            spread=self.spread,
+            slippage=self.slippage
+        )
+        cerebro.broker.addcommissioninfo(comminfo)
+        
+        # Добавление анализаторов
+        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+
+        # Настройка параметров оптимизации
+        opt_params = {}
+        for param_name, (min_val, max_val, step) in optimization_params.items():
+            if isinstance(min_val, float):
+                # Для float параметров
+                values = np.arange(min_val, max_val + step, step)
+                opt_params[param_name] = [round(v, 4) for v in values]
+            else:
+                # Для int параметров
+                opt_params[param_name] = range(int(min_val), int(max_val) + 1, int(step))
+
+        cerebro.optstrategy(strategy_class, **opt_params)
+        print(f"🚀 Запуск оптимизации...")
+
+        # Запуск оптимизации
+        optimization_results = cerebro.run(maxcpus=1)
+
+        # Обработка результатов
+        results_list = []
+        for result in optimization_results:
+            strategy_result = result[0]
+            params = dict(strategy_result.params._getitems())
+
+            final_value = strategy_result.broker.getvalue()
+            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
+
+            # Получение метрик
+            sharpe_ratio = 0
+            total_trades = 0
+            win_rate = 0
+            
+            try:
+                sharpe_analysis = strategy_result.analyzers.sharpe.get_analysis()
+                sharpe_ratio = sharpe_analysis.get('sharperatio', 0) or 0
+            except:
+                pass
+
+            try:
+                trades_analysis = strategy_result.analyzers.trades.get_analysis()
+                total_dict = trades_analysis.get('total', {})
+                won_dict = trades_analysis.get('won', {})
+                
+                total_trades = total_dict.get('total', 0)
+                won_trades = won_dict.get('total', 0)
+                win_rate = (won_trades / max(total_trades, 1)) * 100
+            except:
+                pass
+
+            result_data = {
+                'final_value': final_value,
+                'total_return': total_return,
+                'sharpe_ratio': sharpe_ratio,
+                'total_trades': total_trades,
+                'win_rate': win_rate,
+                **{k: v for k, v in params.items() if k in optimization_params}
+            }
+            results_list.append(result_data)
+
+        # Создание DataFrame с результатами
+        results_df = pd.DataFrame(results_list).sort_values('total_return', ascending=False)
+
+        print(f"\n🏆 РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ:")
+        print("=" * 80)
+        print(results_df.head(10).to_string(index=False, float_format='%.2f'))
+
+        if not results_df.empty:
+            best_result = results_df.iloc[0]
+            print(f"\n🥇 ЛУЧШИЕ ПАРАМЕТРЫ:")
+            for param in optimization_params.keys():
+                print(f"   • {param}: {best_result[param]}")
+            print(f"   📈 Доходность: {best_result['total_return']:+.2f}%")
+            print(f"   📊 Sharpe Ratio: {best_result['sharpe_ratio']:.3f}")
+            print(f"   🎯 Винрейт: {best_result['win_rate']:.1f}%")
+
+        return results_df
+
+    def _print_backtest_header(self, strategy_name: str, exchange: str, symbol: str, 
+                              timeframe: str, start_date: str, end_date: str, params: Dict):
+        """Вывод заголовка бэктеста"""
+        print(f"\n🚀 ЗАПУСК БЭКТЕСТА: {strategy_name}")
+        print("=" * 60)
+        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
+        if start_date or end_date:
+            print(f"📅 Период: {start_date or 'начало'} - {end_date or 'конец'}")
+        print(f"💰 Начальный капитал: ${self.initial_cash:,}")
+        print(f"💸 Комиссия: {self.commission:.3f} | Спред: {self.spread:.4f} | Проскальзывание: {self.slippage:.4f}")
+        
+        if params:
+            print(f"⚙️ Параметры:")
+            for param, value in params.items():
+                print(f"   • {param}: {value}")
+        print()
+
+    def _add_analyzers(self, cerebro):
+        """Добавление анализаторов"""
+        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+        cerebro.addanalyzer(bt.analyzers.SQN, _name='sqn')
+
+    def _process_results(self, result, strategy_name: str, params: Dict, 
+                        exchange: str, symbol: str, timeframe: str) -> Dict[str, Any]:
+        """Обработка результатов бэктеста"""
+        final_value = result.broker.getvalue()
+        total_return = (final_value - self.initial_cash) / self.initial_cash * 100
+
+        analysis_result = {
+            'strategy_name': strategy_name,
+            'exchange': exchange,
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'initial_value': self.initial_cash,
+            'final_value': final_value,
+            'total_return': total_return,
+            'profit_loss': final_value - self.initial_cash,
+            'parameters': params
+        }
+
+        # Анализ сделок
+        try:
+            trades = result.analyzers.trades.get_analysis()
+            analysis_result.update(self._analyze_trades(trades) if trades else self._empty_trades())
+        except Exception:
+            analysis_result.update(self._empty_trades())
+
+        # Дополнительные метрики
+        try:
+            analysis_result.update(self._analyze_metrics(result))
+        except Exception:
+            analysis_result.update({
+                'sharpe_ratio': 0, 'max_drawdown': 0, 'max_drawdown_period': 0, 'sqn': 0
+            })
+
+        return analysis_result
 
     def _analyze_trades(self, trades: Dict) -> Dict[str, Any]:
         """Анализ торговых операций"""
@@ -338,6 +934,7 @@ class UniversalBacktester:
             'lost_pnl_total': lost.get('pnl', {}).get('total', 0)
         }
 
+        # Производные метрики
         total_trades = result['total_trades']
         won_trades = result['won_trades']
         result['win_rate'] = (won_trades / max(total_trades, 1)) * 100
@@ -345,23 +942,28 @@ class UniversalBacktester:
         gross_profit = abs(result['won_pnl_total'])
         gross_loss = abs(result['lost_pnl_total'])
         result['profit_factor'] = gross_profit / max(gross_loss, 1)
-        
+
         return result
 
     def _empty_trades(self) -> Dict[str, Any]:
-        """Пустые торговые метрики"""
-        return {'total_trades': 0, 'won_trades': 0, 'lost_trades': 0,
-                'win_rate': 0, 'profit_factor': 0}
+        """Пустой анализ сделок"""
+        return {
+            'total_trades': 0, 'won_trades': 0, 'lost_trades': 0,
+            'win_rate': 0, 'profit_factor': 0, 'won_pnl_total': 0, 'lost_pnl_total': 0
+        }
 
-    def _detailed_analysis(self, result) -> Dict[str, Any]:
-        """Детальный анализ результатов"""
+    def _analyze_metrics(self, result) -> Dict[str, Any]:
+        """Анализ дополнительных метрик"""
         analysis = {}
+
+        # Sharpe Ratio
         try:
             sharpe = result.analyzers.sharpe.get_analysis()
             analysis['sharpe_ratio'] = sharpe.get('sharperatio', 0) or 0
         except:
             analysis['sharpe_ratio'] = 0
 
+        # Drawdown
         try:
             drawdown = result.analyzers.drawdown.get_analysis()
             analysis['max_drawdown'] = drawdown.get('max', {}).get('drawdown', 0) or 0
@@ -370,1184 +972,89 @@ class UniversalBacktester:
             analysis['max_drawdown'] = 0
             analysis['max_drawdown_period'] = 0
 
+        # SQN
         try:
-            returns = result.analyzers.returns.get_analysis()
-            analysis['total_returns'] = (returns.get('rtot', 0) or 0) * 100
-            analysis['average_returns'] = (returns.get('ravg', 0) or 0) * 100
+            sqn = result.analyzers.sqn.get_analysis()
+            analysis['sqn'] = sqn.get('sqn', 0) or 0
         except:
-            analysis['total_returns'] = 0
-            analysis['average_returns'] = 0
+            analysis['sqn'] = 0
 
         return analysis
 
     def _print_results(self, results: Dict[str, Any]):
-        """Вывод результатов"""
+        """Вывод отформатированных результатов"""
         print("\n📊 РЕЗУЛЬТАТЫ БЭКТЕСТИРОВАНИЯ")
         print("=" * 60)
-        print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
-        print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
-        print(f"📈 Общая доходность:      {results['total_return']:+.2f}%")
-        print(f"💵 Прибыль/Убыток:        ${results['profit_loss']:+,.2f}")
-
-        if 'total_trades' in results:
-            print(f"\n🔄 Всего сделок:          {results['total_trades']}")
-            print(f"✅ Выигрышных сделок:     {results.get('won_trades', 0)}")
-            print(f"❌ Проигрышных сделок:    {results.get('lost_trades', 0)}")
-            print(f"🎯 Винрейт:               {results.get('win_rate', 0):.1f}%")
-            print(f"⚖️ Profit Factor:         {results.get('profit_factor', 0):.2f}")
-
-        if 'sharpe_ratio' in results:
-            print(f"\n📊 Коэффициент Шарпа:     {results['sharpe_ratio']:.3f}")
-            print(f"📉 Макс. просадка:        {results['max_drawdown']:.2f}%")
-        print("=" * 60)
-
-    def _plot_results(self, cerebro, strategy_name: str):
-        """Построение графиков"""
-        try:
-            print(f"\n📈 Построение графика для {strategy_name}...")
-            cerebro.plot(figsize=(15, 8), style='candlestick', volume=False)
-            plt.suptitle(f'Backtest Results: {strategy_name}', fontsize=16)
-            plt.show()
-        except Exception as e:
-            print(f"⚠️ Ошибка построения графика: {e}")
-
-    def compare_strategies(self, strategy_names: List[str] = None,
-                          custom_params: Dict[str, Dict[str, Any]] = None,
-                          data_path: str = None, timeframe: str = "1d",
-                          skip_errors: bool = True, suppress_strategy_errors: bool = True) -> pd.DataFrame:
-        """Сравнение стратегий"""
-        if strategy_names is None:
-            strategy_names = list(self.strategies_registry.keys())
-        if custom_params is None:
-            custom_params = {}
-
-        print(f"\n🔍 СРАВНЕНИЕ СТРАТЕГИЙ")
-        print("=" * 80)
-        print(f"📊 Стратегий к тестированию: {len(strategy_names)}")
-        print(f"⏱️ Таймфрейм: {timeframe}")
-        if suppress_strategy_errors:
-            print("🔇 Режим: Ошибки стратегий подавлены")
-        print()
-
-        results = []
-        failed_strategies = []
-
-        for i, strategy_name in enumerate(strategy_names, 1):
-            if strategy_name not in self.strategies_registry:
-                print(f"❌ Стратегия '{strategy_name}' не найдена, пропускаю...")
-                continue
-
-            print(f"⏳ [{i}/{len(strategy_names)}] Тестирование: {strategy_name}")
-            try:
-                params = custom_params.get(strategy_name, {})
-                result = self.run_backtest(
-                    strategy_name=strategy_name, strategy_params=params,
-                    data_path=data_path, timeframe=timeframe, show_plot=False,
-                    verbose=False, suppress_strategy_errors=suppress_strategy_errors
-                )
-                results.append(result)
-                print(f"✅ Завершено: {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
-            except Exception as e:
-                error_msg = str(e)
-                if "array index out of range" in error_msg:
-                    print(f"❌ Ошибка в {strategy_name}: Ошибка выполнения стратегии")
-                else:
-                    print(f"❌ Ошибка в {strategy_name}: {error_msg}")
-                failed_strategies.append(strategy_name)
-                if not skip_errors:
-                    raise e
-
-        if failed_strategies:
-            print(f"\n⚠️ Стратегии с ошибками ({len(failed_strategies)}):")
-            for strategy in failed_strategies:
-                print(f"   • {strategy}")
-
-        if not results:
-            print("❌ Нет успешных результатов для сравнения")
-            return pd.DataFrame()
-
-        comparison_df = pd.DataFrame(results).sort_values('total_return', ascending=False)
-        key_metrics = ['strategy_name', 'total_return', 'profit_loss', 'total_trades',
-                      'win_rate', 'profit_factor', 'sharpe_ratio', 'max_drawdown']
-        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
-        display_df = comparison_df[available_metrics].copy()
-
-        print(f"\n🏆 РЕЙТИНГ СТРАТЕГИЙ:")
-        print("=" * 100)
-        print(display_df.to_string(index=False, float_format='%.2f'))
-
-        if len(results) > 0:
-            best_strategy = comparison_df.iloc[0]
-            print(f"\n🥇 ЛУЧШАЯ СТРАТЕГИЯ: {best_strategy['strategy_name']}")
-            print(f"   📈 Доходность: {best_strategy['total_return']:+.2f}%")
-            print(f"   💰 Прибыль: ${best_strategy['profit_loss']:+,.2f}")
-            print(f"   🎯 Винрейт: {best_strategy.get('win_rate', 0):.1f}%")
-
-        print("=" * 100)
-        return display_df
-
-    def get_strategy_info(self, strategy_name: str) -> Dict[str, Any]:
-        """Получить информацию о стратегии"""
-        if strategy_name not in self.strategies_registry:
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
-        return self.strategies_registry[strategy_name]
-
-    def optimize_strategy(self, strategy_name: str, optimization_params: Dict[str, tuple],
-                         data_path: str = None, timeframe: str = "1d", max_iterations: int = 100) -> pd.DataFrame:
-        """Оптимизация параметров стратегии"""
-        print(f"\n🔧 ОПТИМИЗАЦИЯ СТРАТЕГИИ: {strategy_name}")
-        print("=" * 60)
-
-        if strategy_name not in self.strategies_registry:
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
-
-        strategy_info = self.strategies_registry[strategy_name]
-        strategy_class = strategy_info['class']
-
-        cerebro = bt.Cerebro(optreturn=False)
-        data_feed = self.load_data(data_path, timeframe)
-        cerebro.adddata(data_feed)
-        cerebro.broker.setcash(self.initial_cash)
-        cerebro.broker.setcommission(commission=self.commission)
-        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-
-        opt_params = {}
-        for param_name, (min_val, max_val, step) in optimization_params.items():
-            opt_params[param_name] = range(int(min_val), int(max_val), int(step))
-
-        cerebro.optstrategy(strategy_class, **opt_params)
-        print(f"🚀 Запуск оптимизации с параметрами: {optimization_params}")
-
-        optimization_results = cerebro.run(maxcpus=1)
-
-        results_list = []
-        for result in optimization_results:
-            strategy_result = result[0]
-            params = strategy_result.params._getitems()
-
-            final_value = strategy_result.broker.getvalue()
-            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
-
-            sharpe_ratio = 0
-            try:
-                sharpe_analysis = strategy_result.analyzers.sharpe.get_analysis()
-                sharpe_ratio = sharpe_analysis.get('sharperatio', 0) or 0
-            except:
-                pass
-
-            result_data = {
-                'final_value': final_value,
-                'total_return': total_return,
-                'sharpe_ratio': sharpe_ratio,
-                **{k: v for k, v in params if k in optimization_params}
-            }
-            results_list.append(result_data)
-
-        results_df = pd.DataFrame(results_list).sort_values('total_return', ascending=False)
-
-        print(f"\n🏆 РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ:")
-        print("=" * 80)
-        print(results_df.head(10).to_string(index=False, float_format='%.2f'))
-
-        best_result = results_df.iloc[0]
-        print(f"\n🥇 ЛУЧШИЕ ПАРАМЕТРЫ:")
-        for param in optimization_params.keys():
-            print(f"   • {param}: {best_result[param]}")
-        print(f"   📈 Доходность: {best_result['total_return']:+.2f}%")
-        print(f"   📊 Sharpe Ratio: {best_result['sharpe_ratio']:.3f}")
-
-        return results_df
-
-
-# Пример использования
-if __name__ == "__main__":
-    backtester = UniversalBacktester(initial_cash=100000, commission=0.001)
-    backtester.list_strategies()
-    # backtester.run_backtest("SafeProfitableBTCStrategy")
-    # backtester.compare_strategies()
-if __name__ == "__main__":
-    backtester = UniversalBacktester(initial_cash=100000, commission=0.001)
-    backtester.list_strategies()
-    # backtester.run_backtest("SafeProfitableBTCStrategy")
-    # backtester.compare_strategies()
-
-    def _detailed_analysis(self, result) -> Dict[str, Any]:
-        """Детальный анализ результатов"""
-        analysis = {}
         
-        # Sharpe Ratio
-        try:
-            sharpe = result.analyzers.sharpe.get_analysis()
-            analysis['sharpe_ratio'] = sharpe.get('sharperatio', 0) or 0
-        except:
-            analysis['sharpe_ratio'] = 0
+        # Основные метрики
+        print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
+        print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
+        print(f"📈 Общая доходность:      {results['total_return']:+.2f}%")
+        print(f"💵 Прибыль/Убыток:        ${results['profit_loss']:+,.2f}")
 
-        # DrawDown
-        try:
-            drawdown = result.analyzers.drawdown.get_analysis()
-            analysis['max_drawdown'] = drawdown.get('max', {}).get('drawdown', 0) or 0
-            analysis['max_drawdown_period'] = drawdown.get('max', {}).get('len', 0) or 0
-        except:
-            analysis['max_drawdown'] = 0
-            analysis['max_drawdown_period'] = 0
+        # Торговые метрики
+        if 'total_trades' in results:
+            print(f"\n🔄 Всего сделок:          {results['total_trades']}")
+            print(f"✅ Выигрышных сделок:     {results.get('won_trades', 0)}")
+            print(f"❌ Проигрышных сделок:    {results.get('lost_trades', 0)}")
+            print(f"🎯 Винрейт:               {results.get('win_rate', 0):.1f}%")
+            print(f"⚖️ Profit Factor:         {results.get('profit_factor', 0):.2f}")
 
-        # Returns
-        try:
-            returns = result.analyzers.returns.get_analysis()
-            analysis['total_returns'] = (returns.get('rtot', 0) or 0) * 100
-            analysis['average_returns'] = (returns.get('ravg', 0) or 0) * 100
-        except:
-            analysis['total_returns'] = 0
-            analysis['average_returns'] = 0
+        # Дополнительные метрики
+        if 'sharpe_ratio' in results:
+            print(f"\n📊 Коэффициент Шарпа:     {results['sharpe_ratio']:.3f}")
+            print(f"📉 Макс. просадка:        {results['max_drawdown']:.2f}%")
+            print(f"🎖️ SQN:                   {results.get('sqn', 0):.2f}")
 
-        return analysis
+        print("=" * 60)
+
+    def _plot_results(self, cerebro, strategy_name: str, exchange: str, symbol: str, timeframe: str):
+        """Построение графика результатов"""
+        try:
+            print(f"\n📈 Построение графика...")
+            cerebro.plot(figsize=(15, 8), style='candlestick', volume=False)
+            plt.suptitle(f'{strategy_name} | {exchange}:{symbol} ({timeframe})', fontsize=16)
+            plt.show()
+        except Exception as e:
+            print(f"⚠️ Ошибка построения графика: {e}")
+
+
+# Пример использования
+if __name__ == "__main__":
+    # Создание бэктестера
+    backtester = UniversalBacktester(
+        initial_cash=100000,
+        commission=0.001,  # 0.1%
+        spread=0.0005,     # 0.05%
+        slippage=0.0002    # 0.02%
+    )
     
-    def _print_results(self, results: Dict[str, Any]):
-        """Вывод результатов на консоль"""
-        print("\n📊 РЕЗУЛЬТАТЫ БЭКТЕСТИРОВАНИЯ")
-        print("=" * 60)
-
-        # Основные метрики
-        print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
-        print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
-        print(f"📈 Общая доходность:      {results['total_return']:+.2f}%")
-        print(f"💵 Прибыль/Убыток:        ${results['profit_loss']:+,.2f}")
-
-        # Торговые метрики
-        if 'total_trades' in results:
-            print(f"\n🔄 Всего сделок:          {results['total_trades']}")
-            print(f"✅ Выигрышных сделок:     {results.get('won_trades', 0)}")
-            print(f"❌ Проигрышных сделок:    {results.get('lost_trades', 0)}")
-            print(f"🎯 Винрейт:               {results.get('win_rate', 0):.1f}%")
-            print(f"⚖️ Profit Factor:         {results.get('profit_factor', 0):.2f}")
-
-        # Дополнительные метрики
-        if 'sharpe_ratio' in results:
-            print(f"\n📊 Коэффициент Шарпа:     {results['sharpe_ratio']:.3f}")
-            print(f"📉 Макс. просадка:        {results['max_drawdown']:.2f}%")
-
-        print("=" * 60)
-
-    def _plot_results(self, cerebro, strategy_name: str):
-        """Построение графиков"""
-        try:
-            print(f"\n📈 Построение графика для {strategy_name}...")
-            cerebro.plot(figsize=(15, 8), style='candlestick', volume=False)
-            plt.suptitle(f'Backtest Results: {strategy_name}', fontsize=16)
-            plt.show()
-        except Exception as e:
-            print(f"⚠️ Ошибка построения графика: {e}")
-
-    def compare_strategies(self,
-                          strategy_names: List[str] = None,
-                          custom_params: Dict[str, Dict[str, Any]] = None,
-                          data_path: str = None,
-                          timeframe: str = "1d",
-                          skip_errors: bool = True) -> pd.DataFrame:
-        """
-        Сравнение стратегий
-
-        Args:
-            strategy_names: список имен стратегий для сравнения (если None - все стратегии)
-            custom_params: словарь кастомных параметров для стратегий
-            data_path: путь к данным
-            timeframe: таймфрейм данных
-            skip_errors: пропускать стратегии с ошибками
-        """
-
-        if strategy_names is None:
-            strategy_names = list(self.strategies_registry.keys())
-
-        if custom_params is None:
-            custom_params = {}
-
-        print(f"\n🔍 СРАВНЕНИЕ СТРАТЕГИЙ")
-        print("=" * 80)
-        print(f"📊 Стратегий к тестированию: {len(strategy_names)}")
-        print(f"⏱️ Таймфрейм: {timeframe}")
-        print()
-
-        results = []
-        failed_strategies = []
-
-        for i, strategy_name in enumerate(strategy_names, 1):
-            if strategy_name not in self.strategies_registry:
-                print(f"❌ Стратегия '{strategy_name}' не найдена, пропускаю...")
-                continue
-
-            print(f"⏳ [{i}/{len(strategy_names)}] Тестирование: {strategy_name}")
-
-            try:
-                # Используем кастомные параметры если есть
-                params = custom_params.get(strategy_name, {})
-
-                result = self.run_backtest(
-                    strategy_name=strategy_name,
-                    strategy_params=params,
-                    data_path=data_path,
-                    timeframe=timeframe,
-                    show_plot=False,
-                    verbose=False
-                )
-                results.append(result)
-                print(f"✅ Завершено: {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
-
-            except Exception as e:
-                error_msg = str(e)
-                if "array index out of range" in error_msg:
-                    print(f"❌ Ошибка в {strategy_name}: Ошибка выполнения стратегии: {error_msg}")
-                else:
-                    print(f"❌ Ошибка в {strategy_name}: {error_msg}")
-
-                failed_strategies.append(strategy_name)
-
-                if not skip_errors:
-                    raise e
-                continue
-
-        if failed_strategies:
-            print(f"\n⚠️ Стратегии с ошибками ({len(failed_strategies)}):")
-            for strategy in failed_strategies:
-                print(f"   • {strategy}")
-
-        if not results:
-            print("❌ Нет успешных результатов для сравнения")
-            return pd.DataFrame()
-
-        # Создаем DataFrame для сравнения
-        comparison_df = pd.DataFrame(results)
-
-        # Сортируем по доходности
-        comparison_df = comparison_df.sort_values('total_return', ascending=False)
-
-        # Выбираем ключевые метрики для отображения
-        key_metrics = [
-            'strategy_name', 'total_return', 'profit_loss', 'total_trades',
-            'win_rate', 'profit_factor', 'sharpe_ratio', 'max_drawdown'
-        ]
-
-        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
-        display_df = comparison_df[available_metrics].copy()
-
-        print(f"\n🏆 РЕЙТИНГ СТРАТЕГИЙ:")
-        print("=" * 100)
-        print(display_df.to_string(index=False, float_format='%.2f'))
-
-        # Лучшая стратегия
-        if len(results) > 0:
-            best_strategy = comparison_df.iloc[0]
-            print(f"\n🥇 ЛУЧШАЯ СТРАТЕГИЯ: {best_strategy['strategy_name']}")
-            print(f"   📈 Доходность: {best_strategy['total_return']:+.2f}%")
-            print(f"   💰 Прибыль: ${best_strategy['profit_loss']:+,.2f}")
-            print(f"   🎯 Винрейт: {best_strategy.get('win_rate', 0):.1f}%")
-
-        print("=" * 100)
-
-        return display_df
-
-    def get_strategy_info(self, strategy_name: str) -> Dict[str, Any]:
-        """Получить подробную информацию о стратегии"""
-        if strategy_name not in self.strategies_registry:
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
-
-        return self.strategies_registry[strategy_name]
-
-    def optimize_strategy(self,
-                         strategy_name: str,
-                         optimization_params: Dict[str, tuple],
-                         data_path: str = None,
-                         timeframe: str = "1d",
-                         max_iterations: int = 100) -> pd.DataFrame:
-        """
-        Оптимизация параметров стратегии
-
-        Args:
-            strategy_name: имя стратегии для оптимизации
-            optimization_params: словарь параметров для оптимизации в формате {param_name: (min, max, step)}
-            data_path: путь к данным
-            timeframe: таймфрейм
-            max_iterations: максимальное количество итераций
-        """
-        print(f"\n🔧 ОПТИМИЗАЦИЯ СТРАТЕГИИ: {strategy_name}")
-        print("=" * 60)
-
-        if strategy_name not in self.strategies_registry:
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
-
-        strategy_info = self.strategies_registry[strategy_name]
-        strategy_class = strategy_info['class']
-
-        # Настройка Cerebro для оптимизации
-        cerebro = bt.Cerebro(optreturn=False)
-
-        # Добавляем данные
-        data_feed = self.load_data(data_path, timeframe)
-        cerebro.adddata(data_feed)
-
-        # Настройки брокера
-        cerebro.broker.setcash(self.initial_cash)
-        cerebro.broker.setcommission(commission=self.commission)
-
-        # Добавляем анализаторы
-        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-
-        # Добавляем стратегию с параметрами для оптимизации
-        opt_params = {}
-        for param_name, (min_val, max_val, step) in optimization_params.items():
-            opt_params[param_name] = range(int(min_val), int(max_val), int(step))
-
-        cerebro.optstrategy(strategy_class, **opt_params)
-
-        print(f"🚀 Запуск оптимизации с параметрами: {optimization_params}")
-
-        # Запуск оптимизации
-        optimization_results = cerebro.run(maxcpus=1)
-
-        # Обработка результатов
-        results_list = []
-        for result in optimization_results:
-            strategy_result = result[0]
-            params = strategy_result.params._getitems()
-
-            final_value = strategy_result.broker.getvalue()
-            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
-
-            sharpe_ratio = 0
-            try:
-                sharpe_analysis = strategy_result.analyzers.sharpe.get_analysis()
-                sharpe_ratio = sharpe_analysis.get('sharperatio', 0) or 0
-            except:
-                pass
-
-            result_data = {
-                'final_value': final_value,
-                'total_return': total_return,
-                'sharpe_ratio': sharpe_ratio,
-                **{k: v for k, v in params if k in optimization_params}
-            }
-            results_list.append(result_data)
-
-        # Создаем DataFrame и сортируем по доходности
-        results_df = pd.DataFrame(results_list)
-        results_df = results_df.sort_values('total_return', ascending=False)
-
-        print(f"\n🏆 РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ:")
-        print("=" * 80)
-        print(results_df.head(10).to_string(index=False, float_format='%.2f'))
-
-        best_result = results_df.iloc[0]
-        print(f"\n🥇 ЛУЧШИЕ ПАРАМЕТРЫ:")
-        for param in optimization_params.keys():
-            print(f"   • {param}: {best_result[param]}")
-        print(f"   📈 Доходность: {best_result['total_return']:+.2f}%")
-        print(f"   📊 Sharpe Ratio: {best_result['sharpe_ratio']:.3f}")
-
-        return results_df
-
-
-# Пример использования
-if __name__ == "__main__":
-    # Создаем бэктестер
-    backtester = UniversalBacktester(initial_cash=100000, commission=0.001)
-
-    # Показываем доступные стратегии
-    backtester.list_strategies()
-
-    # Можно тестировать любую стратегию
-    # backtester.run_backtest("SafeProfitableBTCStrategy")
-
-    # Или сравнить все стратегии
-    # backtester.compare_strategies()
-
-    # Или оптимизировать параметры стратегии
-    # optimization_params = {
-    #     'ema_fast': (10, 20, 2),
-    #     'ema_slow': (20, 30, 5),
-    #     'rsi_period': (10, 20, 2)
-    # }
-    # backtester.optimize_strategy("SafeProfitableBTCStrategy", optimization_params)
-
-
-class UniversalBacktester:
-    """
-    Универсальный бэктестер с автоматическим определением параметров стратегий
-    """
-
-    def __init__(self, initial_cash: float = 100000, commission: float = 0.001):
-        self.initial_cash = initial_cash
-        self.commission = commission
-        self.strategies_registry = {}
-        self.data_cache = {}
-
-        print("🔍 Инициализация универсального бэктестера...")
-        # Автоматически загружаем все доступные стратегии
-        self._discover_strategies()
-
-    def _discover_strategies(self):
-        """Автоматическое обнаружение всех стратегий в проекте"""
-        strategies_path = os.path.join(os.path.dirname(__file__), '../../strategies/TestStrategies/')
-
-        if not os.path.exists(strategies_path):
-            print(f"⚠️ Папка стратегий не найдена: {strategies_path}")
-            return
-
-        print(f"📁 Сканирую папку: {strategies_path}")
-
-        for filename in os.listdir(strategies_path):
-            if filename.endswith('.py') and not filename.startswith('__'):
-                module_name = filename[:-3]  # убираем .py
-                self._load_strategies_from_module(module_name, strategies_path)
-
-    def _load_strategies_from_module(self, module_name: str, module_path: str):
-        """Загрузка стратегий из модуля с извлечением параметров"""
-        try:
-            spec = importlib.util.spec_from_file_location(
-                module_name,
-                os.path.join(module_path, f"{module_name}.py")
-            )
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            strategies_found = 0
-
-            # Находим все классы стратегий в модуле
-            for name, obj in inspect.getmembers(module):
-                if self._is_strategy_class(obj):
-                    try:
-                        # Извлекаем параметры стратегии
-                        default_params = self._extract_strategy_params(obj)
-
-                        self.strategies_registry[name] = {
-                            'class': obj,
-                            'module': module_name,
-                            'file': f"{module_name}.py",
-                            'default_params': default_params,
-                            'description': obj.__doc__ or f"Стратегия {name}"
-                        }
-                        strategies_found += 1
-                        print(f"✅ Найдена стратегия: {name} (файл: {module_name}.py, параметров: {len(default_params)})")
-
-                    except Exception as e:
-                        print(f"⚠️ Ошибка обработки стратегии {name}: {e}")
-                        continue
-
-            if strategies_found == 0:
-                print(f"⚠️ В файле {module_name}.py стратегии не найдены")
-
-        except Exception as e:
-            print(f"❌ Ошибка загрузки модуля {module_name}: {e}")
-
-    def _is_strategy_class(self, obj) -> bool:
-        """Проверяем, является ли объект классом стратегии"""
-        return (
-            inspect.isclass(obj) and
-            issubclass(obj, bt.Strategy) and
-            obj != bt.Strategy and
-            not obj.__name__.startswith('_') and
-            hasattr(obj, '__module__')  # Убеждаемся что это не встроенный класс
-        )
-
-    def _extract_strategy_params(self, strategy_class) -> Dict[str, Any]:
-        """Извлекаем параметры по умолчанию из стратегии"""
-        default_params = {}
-
-        try:
-            # Получаем параметры из атрибута params
-            if hasattr(strategy_class, 'params'):
-                params_attr = getattr(strategy_class, 'params')
-
-                # Проверяем различные форматы params
-                if params_attr is None:
-                    return default_params
-
-                # Если params это кортеж кортежей
-                if isinstance(params_attr, tuple):
-                    for param in params_attr:
-                        if isinstance(param, tuple) and len(param) >= 2:
-                            param_name = param[0]
-                            param_value = param[1]
-                            # Фильтруем внутренние функции backtrader
-                            if not callable(param_value) and not param_name.startswith('_') and param_name not in ['isdefault', 'notdefault']:
-                                default_params[param_name] = param_value
-
-                # Если params это список
-                elif isinstance(params_attr, list):
-                    for param in params_attr:
-                        if isinstance(param, tuple) and len(param) >= 2:
-                            param_name = param[0]
-                            param_value = param[1]
-                            # Фильтруем внутренние функции backtrader
-                            if not callable(param_value) and not param_name.startswith('_') and param_name not in ['isdefault', 'notdefault']:
-                                default_params[param_name] = param_value
-
-                # Если params это словарь
-                elif isinstance(params_attr, dict):
-                    for param_name, param_value in params_attr.items():
-                        # Фильтруем внутренние функции backtrader
-                        if not callable(param_value) and not param_name.startswith('_') and param_name not in ['isdefault', 'notdefault']:
-                            default_params[param_name] = param_value
-
-                # Если params это класс параметров (backtrader стиль)
-                elif hasattr(params_attr, '__dict__'):
-                    for attr_name in dir(params_attr):
-                        if not attr_name.startswith('_') and attr_name not in ['isdefault', 'notdefault']:
-                            attr_value = getattr(params_attr, attr_name)
-                            # Фильтруем внутренние функции backtrader
-                            if not callable(attr_value):
-                                default_params[attr_name] = attr_value
-
-        except Exception as e:
-            print(f"⚠️ Ошибка извлечения параметров: {e}")
-
-        return default_params
-
-    def _load_strategies_from_module(self, module_name: str, module_path: str):
-        """Загрузка стратегий из модуля с извлечением параметров"""
-        try:
-            spec = importlib.util.spec_from_file_location(
-                module_name,
-                os.path.join(module_path, f"{module_name}.py")
-            )
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module  # Добавляем модуль в sys.modules
-            spec.loader.exec_module(module)
-
-            strategies_found = 0
-
-            # Находим все классы стратегий в модуле
-            for name, obj in inspect.getmembers(module):
-                if self._is_strategy_class(obj):
-                    try:
-                        # Извлекаем параметры стратегии
-                        default_params = self._extract_strategy_params(obj)
-
-                        self.strategies_registry[name] = {
-                            'class': obj,
-                            'module': module_name,
-                            'module_obj': module,  # Сохраняем ссылку на модуль
-                            'file': f"{module_name}.py",
-                            'default_params': default_params,
-                            'description': obj.__doc__ or f"Стратегия {name}"
-                        }
-                        strategies_found += 1
-                        print(f"✅ Найдена стратегия: {name} (файл: {module_name}.py, параметров: {len(default_params)})")
-
-                    except Exception as e:
-                        print(f"⚠️ Ошибка обработки стратегии {name}: {e}")
-                        continue
-
-            if strategies_found == 0:
-                print(f"⚠️ В файле {module_name}.py стратегии не найдены")
-
-        except Exception as e:
-            print(f"❌ Ошибка загрузки модуля {module_name}: {e}")
-
-    def list_strategies(self):
-        """Показать все доступные стратегии с их параметрами"""
-        print("\n📋 ДОСТУПНЫЕ СТРАТЕГИИ:")
-        print("=" * 80)
-
-        if not self.strategies_registry:
-            print("❌ Стратегии не найдены!")
-            print("💡 Убедитесь что в папке strategies/TestStrategies/ есть .py файлы со стратегиями")
-            return
-
-        # Группируем стратегии по файлам
-        strategies_by_file = {}
-        for name, info in self.strategies_registry.items():
-            file_name = info['file']
-            if file_name not in strategies_by_file:
-                strategies_by_file[file_name] = []
-            strategies_by_file[file_name].append((name, info))
-
-        for file_name, strategies in strategies_by_file.items():
-            print(f"\n📄 Файл: {file_name}")
-            print("-" * 60)
-
-            for i, (name, info) in enumerate(strategies, 1):
-                print(f"   {i}. 🎯 {name}")
-                print(f"      📝 Описание: {info['description'][:80]}...")
-
-                if info['default_params']:
-                    print(f"      ⚙️ Параметры ({len(info['default_params'])}):")
-                    for param_name, param_value in list(info['default_params'].items())[:5]:  # Показываем первые 5
-                        print(f"         • {param_name}: {param_value}")
-
-                    if len(info['default_params']) > 5:
-                        print(f"         ... и еще {len(info['default_params']) - 5} параметров")
-                else:
-                    print(f"      ⚙️ Параметры: Нет настраиваемых параметров")
-                print()
-
-        print(f"📊 Всего найдено: {len(self.strategies_registry)} стратегий в {len(strategies_by_file)} файлах")
-        print("=" * 80)
-
-    def load_data(self, data_path: str = None, timeframe: str = "1d") -> bt.feeds.PandasData:
-        """Загрузка данных с автоматическим определением формата"""
-        if data_path is None:
-            data_path = f"../../data/binance/BTCUSDT/{timeframe}/2018_01_01-2025_01_01.csv"
-
-        # Проверяем кэш
-        cache_key = f"{data_path}_{timeframe}"
-        if cache_key in self.data_cache:
-            return self.data_cache[cache_key]
-
-        # Формируем полный путь
-        if not os.path.isabs(data_path):
-            full_path = os.path.join(os.path.dirname(__file__), data_path)
-        else:
-            full_path = data_path
-
-        if not os.path.exists(full_path):
-            raise FileNotFoundError(f"Файл данных не найден: {full_path}")
-
-        # Загружаем данные
-        df = pd.read_csv(full_path)
-
-        # Автоматическое определение колонок
-        column_mapping = {}
-        for col in df.columns:
-            col_lower = col.lower().strip()
-            if 'timestamp' in col_lower or 'date' in col_lower or 'time' in col_lower:
-                column_mapping[col] = 'datetime'
-            elif col_lower in ['o', 'open']:
-                column_mapping[col] = 'open'
-            elif col_lower in ['h', 'high']:
-                column_mapping[col] = 'high'
-            elif col_lower in ['l', 'low']:
-                column_mapping[col] = 'low'
-            elif col_lower in ['c', 'close']:
-                column_mapping[col] = 'close'
-            elif col_lower in ['v', 'volume', 'vol']:
-                column_mapping[col] = 'volume'
-
-        # Переименовываем колонки
-        df = df.rename(columns=column_mapping)
-
-        # Обработка временных меток
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'])
-            df.set_index('datetime', inplace=True)
-        elif 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df.set_index('timestamp', inplace=True)
-
-        # Проверяем обязательные колонки
-        required_cols = ['open', 'high', 'low', 'close']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            raise ValueError(f"Отсутствуют обязательные колонки: {missing_cols}")
-
-        # Добавляем volume если отсутствует
-        if 'volume' not in df.columns:
-            df['volume'] = 1000  # Значение по умолчанию
-
-        # Очистка данных
-        df = df[required_cols + ['volume']].dropna()
-        df = df[(df[required_cols] > 0).all(axis=1)]  # Убираем отрицательные цены
-        df.sort_index(inplace=True)
-
-        print(f"✅ Загружено {len(df)} записей из {os.path.basename(full_path)}")
-
-        # Создаем объект данных для backtrader
-        data_feed = bt.feeds.PandasData(dataname=df)
-
-        # Кэшируем
-        self.data_cache[cache_key] = data_feed
-        return data_feed
-
-    def run_backtest(self,
-                    strategy_name: str,
-                    strategy_params: Dict[str, Any] = None,
-                    data_path: str = None,
-                    timeframe: str = "1d",
-                    show_plot: bool = True,
-                    verbose: bool = True) -> Dict[str, Any]:
-        """
-        Запуск бэктестирования для выбранной стратегии
-        """
-
-        if strategy_name not in self.strategies_registry:
-            available = list(self.strategies_registry.keys())
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена. Доступные: {available}")
-
-        strategy_info = self.strategies_registry[strategy_name]
-        strategy_class = strategy_info['class']
-
-        # Объединяем параметры: по умолчанию + пользовательские
-        final_params = strategy_info['default_params'].copy()
-        if strategy_params:
-            final_params.update(strategy_params)
-
-        if verbose:
-            print(f"\n🚀 ЗАПУСК БЭКТЕСТА: {strategy_name}")
-            print("=" * 60)
-            print(f"💰 Начальный капитал: ${self.initial_cash:,}")
-            print(f"💸 Комиссия: {self.commission:.3f}")
-            print(f"📊 Таймфрейм: {timeframe}")
-            if final_params:
-                print(f"⚙️ Параметры:")
-                for param, value in final_params.items():
-                    print(f"   • {param}: {value}")
-            print()
-
-        try:
-            # Настройка Cerebro
-            cerebro = bt.Cerebro()
-
-            # Добавляем стратегию с параметрами
-            cerebro.addstrategy(strategy_class, **final_params)
-
-            # Добавляем данные
-            data_feed = self.load_data(data_path, timeframe)
-            cerebro.adddata(data_feed)
-
-            # Настройки брокера
-            cerebro.broker.setcash(self.initial_cash)
-            cerebro.broker.setcommission(commission=self.commission)
-
-            # Добавляем анализаторы
-            cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
-            cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-            cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-            cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-
-            # Запуск с защитой от ошибок
-            try:
-                results = cerebro.run()
-                if not results:
-                    raise RuntimeError("Стратегия не вернула результатов")
-                result = results[0]
-            except IndexError as e:
-                if verbose:
-                    print(f"❌ Ошибка индекса в стратегии {strategy_name}: {str(e)}")
-                    print("💡 Возможные причины:")
-                    print("   - Недостаточно данных для расчета индикаторов")
-                    print("   - Обращение к данным за пределами массива")
-                    print("   - Неправильная обработка первых/последних периодов")
-                    print("   - Попытка доступа к данным до их инициализации")
-                raise RuntimeError(f"Ошибка выполнения стратегии: {str(e)}")
-            except Exception as e:
-                if verbose:
-                    print(f"❌ Общая ошибка в стратегии {strategy_name}: {str(e)}")
-                    print("💡 Рекомендации:")
-                    print("   - Проверьте логику стратегии на корректность")
-                    print("   - Убедитесь в правильной обработке граничных случаев")
-                    print("   - Добавьте проверки на существование данных")
-                raise RuntimeError(f"Ошибка выполнения стратегии: {str(e)}")
-
-            # Подготовка результатов
-            final_value = cerebro.broker.getvalue()
-            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
-
-            analysis_result = {
-                'strategy_name': strategy_name,
-                'initial_value': self.initial_cash,
-                'final_value': final_value,
-                'total_return': total_return,
-                'profit_loss': final_value - self.initial_cash,
-                'parameters': final_params
-            }
-
-            # Анализ сделок
-            try:
-                trades = result.analyzers.trades.get_analysis()
-                if trades:
-                    analysis_result.update(self._analyze_trades(trades))
-                else:
-                    # Добавляем пустые значения если сделок нет
-                    analysis_result.update({
-                        'total_trades': 0,
-                        'won_trades': 0,
-                        'lost_trades': 0,
-                        'win_rate': 0,
-                        'profit_factor': 0,
-                        'won_pnl_total': 0,
-                        'lost_pnl_total': 0
-                    })
-            except Exception as e:
-                if verbose:
-                    print(f"⚠️ Ошибка анализа сделок: {e}")
-                analysis_result.update({
-                    'total_trades': 0,
-                    'won_trades': 0,
-                    'lost_trades': 0,
-                    'win_rate': 0,
-                    'profit_factor': 0
-                })
-
-            # Дополнительные метрики
-            try:
-                analysis_result.update(self._detailed_analysis(result))
-            except Exception as e:
-                if verbose:
-                    print(f"⚠️ Ошибка детального анализа: {e}")
-                analysis_result.update({
-                    'sharpe_ratio': 0,
-                    'max_drawdown': 0,
-                    'max_drawdown_period': 0
-                })
-
-            # Вывод результатов
-            if verbose:
-                self._print_results(analysis_result)
-
-            # График
-            if show_plot:
-                self._plot_results(cerebro, strategy_name)
-
-            return analysis_result
-
-        except Exception as e:
-            if verbose:
-                print(f"❌ Ошибка выполнения стратегии {strategy_name}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-            raise e
-
-    def _analyze_trades(self, trades: Dict) -> Dict[str, Any]:
-        """Анализ торговых операций"""
-        result = {}
-
-        # Общие сделки
-        if 'total' in trades:
-            total = trades['total']
-            result['total_trades'] = total.get('total', 0)
-            result['open_trades'] = total.get('open', 0)
-            result['closed_trades'] = total.get('closed', 0)
-        else:
-            result['total_trades'] = 0
-            result['open_trades'] = 0
-            result['closed_trades'] = 0
-
-        # Выигрышные сделки
-        if 'won' in trades:
-            won = trades['won']
-            result['won_trades'] = won.get('total', 0)
-            result['won_pnl_total'] = won.get('pnl', {}).get('total', 0)
-            result['won_pnl_average'] = won.get('pnl', {}).get('average', 0)
-        else:
-            result['won_trades'] = 0
-            result['won_pnl_total'] = 0
-            result['won_pnl_average'] = 0
-
-        # Проигрышные сделки
-        if 'lost' in trades:
-            lost = trades['lost']
-            result['lost_trades'] = lost.get('total', 0)
-            result['lost_pnl_total'] = lost.get('pnl', {}).get('total', 0)
-            result['lost_pnl_average'] = lost.get('pnl', {}).get('average', 0)
-        else:
-            result['lost_trades'] = 0
-            result['lost_pnl_total'] = 0
-            result['lost_pnl_average'] = 0
-
-        # Вычисляем производные метрики
-        total_trades = result.get('total_trades', 0)
-        won_trades = result.get('won_trades', 0)
-        result['win_rate'] = (won_trades / max(total_trades, 1)) * 100
-
-        # Profit Factor
-        gross_profit = abs(result.get('won_pnl_total', 0))
-        gross_loss = abs(result.get('lost_pnl_total', 0))
-        result['profit_factor'] = gross_profit / max(gross_loss, 1)
-
-        return result
-
-    def _detailed_analysis(self, result) -> Dict[str, Any]:
-        """Детальный анализ результатов"""
-        analysis = {}
-
-        # Sharpe Ratio
-        try:
-            sharpe = result.analyzers.sharpe.get_analysis()
-            analysis['sharpe_ratio'] = sharpe.get('sharperatio', 0) or 0
-        except:
-            analysis['sharpe_ratio'] = 0
-
-        # DrawDown
-        try:
-            drawdown = result.analyzers.drawdown.get_analysis()
-            analysis['max_drawdown'] = drawdown.get('max', {}).get('drawdown', 0) or 0
-            analysis['max_drawdown_period'] = drawdown.get('max', {}).get('len', 0) or 0
-        except:
-            analysis['max_drawdown'] = 0
-            analysis['max_drawdown_period'] = 0
-
-        # Returns
-        try:
-            returns = result.analyzers.returns.get_analysis()
-            analysis['total_returns'] = (returns.get('rtot', 0) or 0) * 100
-            analysis['average_returns'] = (returns.get('ravg', 0) or 0) * 100
-        except:
-            analysis['total_returns'] = 0
-            analysis['average_returns'] = 0
-
-        return analysis
-
-    def _print_results(self, results: Dict[str, Any]):
-        """Вывод результатов на консоль"""
-        print("\n📊 РЕЗУЛЬТАТЫ БЭКТЕСТИРОВАНИЯ")
-        print("=" * 60)
-
-        # Основные метрики
-        print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
-        print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
-        print(f"📈 Общая доходность:      {results['total_return']:+.2f}%")
-        print(f"💵 Прибыль/Убыток:        ${results['profit_loss']:+,.2f}")
-
-        # Торговые метрики
-        if 'total_trades' in results:
-            print(f"\n🔄 Всего сделок:          {results['total_trades']}")
-            print(f"✅ Выигрышных сделок:     {results.get('won_trades', 0)}")
-            print(f"❌ Проигрышных сделок:    {results.get('lost_trades', 0)}")
-            print(f"🎯 Винрейт:               {results.get('win_rate', 0):.1f}%")
-            print(f"⚖️ Profit Factor:         {results.get('profit_factor', 0):.2f}")
-
-        # Дополнительные метрики
-        if 'sharpe_ratio' in results:
-            print(f"\n📊 Коэффициент Шарпа:     {results['sharpe_ratio']:.3f}")
-            print(f"📉 Макс. просадка:        {results['max_drawdown']:.2f}%")
-
-        print("=" * 60)
-
-    def _plot_results(self, cerebro, strategy_name: str):
-        """Построение графиков"""
-        try:
-            print(f"\n📈 Построение графика для {strategy_name}...")
-            cerebro.plot(figsize=(15, 8), style='candlestick', volume=False)
-            plt.suptitle(f'Backtest Results: {strategy_name}', fontsize=16)
-            plt.show()
-        except Exception as e:
-            print(f"⚠️ Ошибка построения графика: {e}")
-
-    def compare_strategies(self,
-                          strategy_names: List[str] = None,
-                          custom_params: Dict[str, Dict[str, Any]] = None,
-                          data_path: str = None,
-                          timeframe: str = "1d",
-                          skip_errors: bool = True) -> pd.DataFrame:
-        """
-        Сравнение стратегий
-
-        Args:
-            strategy_names: список имен стратегий для сравнения (если None - все стратегии)
-            custom_params: словарь кастомных параметров для стратегий
-            data_path: путь к данным
-            timeframe: таймфрейм данных
-            skip_errors: пропускать стратегии с ошибками
-        """
-
-        if strategy_names is None:
-            strategy_names = list(self.strategies_registry.keys())
-
-        if custom_params is None:
-            custom_params = {}
-
-        print(f"\n🔍 СРАВНЕНИЕ СТРАТЕГИЙ")
-        print("=" * 80)
-        print(f"📊 Стратегий к тестированию: {len(strategy_names)}")
-        print(f"⏱️ Таймфрейм: {timeframe}")
-        print()
-
-        results = []
-        failed_strategies = []
-
-        for i, strategy_name in enumerate(strategy_names, 1):
-            if strategy_name not in self.strategies_registry:
-                print(f"❌ Стратегия '{strategy_name}' не найдена, пропускаю...")
-                continue
-
-            print(f"⏳ [{i}/{len(strategy_names)}] Тестирование: {strategy_name}")
-
-            try:
-                # Используем кастомные параметры если есть
-                params = custom_params.get(strategy_name, {})
-
-                result = self.run_backtest(
-                    strategy_name=strategy_name,
-                    strategy_params=params,
-                    data_path=data_path,
-                    timeframe=timeframe,
-                    show_plot=False,
-                    verbose=False
-                )
-                results.append(result)
-                print(f"✅ Завершено: {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
-
-            except Exception as e:
-                error_msg = str(e)
-                if "array index out of range" in error_msg:
-                    print(f"❌ Ошибка в {strategy_name}: Ошибка выполнения стратегии: {error_msg}")
-                else:
-                    print(f"❌ Ошибка в {strategy_name}: {error_msg}")
-
-                failed_strategies.append(strategy_name)
-
-                if not skip_errors:
-                    raise e
-                continue
-
-        if failed_strategies:
-            print(f"\n⚠️ Стратегии с ошибками ({len(failed_strategies)}):")
-            for strategy in failed_strategies:
-                print(f"   • {strategy}")
-
-        if not results:
-            print("❌ Нет успешных результатов для сравнения")
-            return pd.DataFrame()
-
-        # Создаем DataFrame для сравнения
-        comparison_df = pd.DataFrame(results)
-
-        # Сортируем по доходности
-        comparison_df = comparison_df.sort_values('total_return', ascending=False)
-
-        # Выбираем ключевые метрики для отображения
-        key_metrics = [
-            'strategy_name', 'total_return', 'profit_loss', 'total_trades',
-            'win_rate', 'profit_factor', 'sharpe_ratio', 'max_drawdown'
-        ]
-
-        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
-        display_df = comparison_df[available_metrics].copy()
-
-        print(f"\n🏆 РЕЙТИНГ СТРАТЕГИЙ:")
-        print("=" * 100)
-        print(display_df.to_string(index=False, float_format='%.2f'))
-
-        # Лучшая стратегия
-        if len(results) > 0:
-            best_strategy = comparison_df.iloc[0]
-            print(f"\n🥇 ЛУЧШАЯ СТРАТЕГИЯ: {best_strategy['strategy_name']}")
-            print(f"   📈 Доходность: {best_strategy['total_return']:+.2f}%")
-            print(f"   💰 Прибыль: ${best_strategy['profit_loss']:+,.2f}")
-            print(f"   🎯 Винрейт: {best_strategy.get('win_rate', 0):.1f}%")
-
-        print("=" * 100)
-
-        return display_df
-
-    def get_strategy_info(self, strategy_name: str) -> Dict[str, Any]:
-        """Получить подробную информацию о стратегии"""
-        if strategy_name not in self.strategies_registry:
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
-
-        return self.strategies_registry[strategy_name]
-
-
-# Пример использования
-if __name__ == "__main__":
-    # Создаем бэктестер
-    backtester = UniversalBacktester(initial_cash=100000, commission=0.001)
-
-    # Показываем доступные стратегии
-    backtester.list_strategies()
-
-    # Можно тестировать любую стратегию
-    # backtester.run_backtest("ProfitableBTCStrategy")
-
-    # Или сравнить все стратегии
+    # Просмотр доступных опций
+    backtester.list_available_options()
+    
+    # Пример: запуск одной стратегии
+    backtester.run_single_backtest(
+        strategy_name="SafeProfitableBTCStrategy",
+        exchange="binance",
+        symbol="BTCUSDT",
+        timeframe="1d"
+    )
+    
+    # Пример: тестирование на множественных данных
+    data_configs = [
+        {"exchange": "binance", "symbol": "BTCUSDT", "timeframe": "1d"},
+        {"exchange": "binance", "symbol": "ETHUSDT", "timeframe": "1d"},
+        {"exchange": "binance", "symbol": "BTCUSDT", "timeframe": "4h"},
+    ]
+    backtester.run_multi_data_backtest("SafeProfitableBTCStrategy", data_configs)
+
+    # Пример: сравнение стратегий
     backtester.compare_strategies()
+
+    # Пример: оптимизация параметров
+    optimization_params = {
+        'ema_fast': (10, 20, 2),
+        'ema_slow': (20, 30, 5),
+        'rsi_period': (10, 20, 2)
+    }
+    backtester.optimize_strategy("SafeProfitableBTCStrategy", optimization_params)
