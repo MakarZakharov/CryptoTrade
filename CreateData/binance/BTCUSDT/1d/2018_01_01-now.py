@@ -2,7 +2,8 @@ import requests
 import pandas as pd
 import mplfinance as mpf
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
+import time
 
 def get_klines(symbol, interval, start_str, end_str=None):
     url = "https://api.binance.com/api/v3/klines"
@@ -23,7 +24,7 @@ def get_klines(symbol, interval, start_str, end_str=None):
 
         response = requests.get(url, params=params)
         data = response.json()
-        if not data:
+        if not data or isinstance(data, dict) and "code" in data:
             break
 
         all_klines += data
@@ -52,25 +53,40 @@ def klines_to_dataframe(klines):
     df = df[["timestamp", "open", "high", "low", "close", "volume", "quote_volume"]]
     return df
 
-def plot_candles(df):
+def plot_candles(df, symbol, interval):
     df_plot = df.copy()
     df_plot.index = pd.to_datetime(df_plot["timestamp"])
     df_plot = df_plot[["open", "high", "low", "close", "volume"]]
-    mpf.plot(df_plot, type="candle", style="charles", volume=True, title="BTCUSDT 4H: 15.12.2022–01.01.2025", ylabel="Цена", ylabel_lower="Объем")
+    title = f"{symbol} {interval}: 01.01.2018–{datetime.today().strftime('%d.%m.%Y')}"
+    mpf.plot(df_plot, type="candle", style="charles", volume=True, title=title, ylabel="Цена", ylabel_lower="Объем")
 
-def save_and_show(symbol, interval, start_date, end_date, filename):
-    print("Загружаем данные...")
-    klines = get_klines(symbol, interval, start_date, end_date)
-    df = klines_to_dataframe(klines)
-
+def save_and_show(symbol, interval, start_date, filename):
+    end_date = datetime.today().strftime("%Y-%m-%d")
     current_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(current_dir, filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    df.to_csv(path, index=False)
-    print(f"CSV сохранён как: {filename}")
+    for attempt in range(3):
+        print(f"Попытка {attempt + 1} загрузки данных для {symbol}...")
+        klines = get_klines(symbol, interval, start_date, end_date)
+        df = klines_to_dataframe(klines)
 
-    print("Открываем график...")
-    plot_candles(df)
+        if df.shape[0] > 50 and not df.isnull().values.any():
+            df.to_csv(path, index=False)
+            print(f"CSV сохранён как: {filename}")
+            print("Открываем график...")
+            plot_candles(df, symbol, interval)
+            return
+        else:
+            print("Данные некорректны, повторная попытка...\n")
+            time.sleep(2)
+
+    print(f"Не удалось получить корректные данные для {symbol} после 3 попыток.")
 
 if __name__ == "__main__":
-    save_and_show("BTCUSDT", "4h", "2022-12-15", "2025-01-01", "../../../../data/binance/BTCUSDT/4h/2022_12_15-2025_01_01.csv")
+    save_and_show(
+        symbol="BTCUSDT",
+        interval="1d",
+        start_date="2018-01-01",
+        filename="../../../../data/binance/BTCUSDT/1d/2018_01_01-now.csv"
+    )
