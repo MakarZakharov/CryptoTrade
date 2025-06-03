@@ -13,7 +13,7 @@ class ProfitableBTCStrategy(bt.Strategy):
         ('position_size', 0.95),
     )
 
-    def __init__(self):
+    def init(self):
         # Основні індикатори
         self.ema_fast = bt.ind.EMA(period=self.p.ema_fast)
         self.ema_slow = bt.ind.EMA(period=self.p.ema_slow)
@@ -105,7 +105,7 @@ class ProfitableBTCStrategy(bt.Strategy):
                     except (IndexError, TypeError):
                         pass
 
-                    # EMA кросс вниз
+# EMA кросс вниз
                     try:
                         if len(self.ema_cross_down) > 0 and self.ema_cross_down[0]:
                             exit_signal = True
