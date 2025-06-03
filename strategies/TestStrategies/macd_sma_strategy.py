@@ -11,6 +11,7 @@ class MACD_SMA_Strategy(bt.Strategy):
         ("macd_slow", 20),
         ("sma_fast", 20),
         ("sma_slow", 75),
+        ("position_size", 1.0),  # Добавлено обязательное поле
     )
 
     def __init__(self):

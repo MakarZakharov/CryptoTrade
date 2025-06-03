@@ -13,7 +13,7 @@ class SafeProfitableBTCStrategy(bt.Strategy):
         ('rsi_period', 14),
         ('rsi_oversold', 30),
         ('rsi_overbought', 70),
-        ('position_size', 0.95),
+        ('position_size', 1.0),
         ('stop_loss', 0.10),
         ('take_profit', 0.20),
     )
@@ -107,7 +107,7 @@ class MovingAverageCrossStrategy(bt.Strategy):
     params = (
         ('ma_fast', 20),
         ('ma_slow', 50),
-        ('position_size', 0.9),
+        ('position_size', 1.0),
     )
 
     def __init__(self):
@@ -147,7 +147,7 @@ class RSIStrategy(bt.Strategy):
         ('rsi_period', 14),
         ('rsi_oversold', 30),
         ('rsi_overbought', 70),
-        ('position_size', 0.9),
+        ('position_size', 1.0),
     )
 
     def __init__(self):
@@ -185,7 +185,7 @@ class MACDStrategy(bt.Strategy):
         ('macd_fast', 12),
         ('macd_slow', 26),
         ('macd_signal', 9),
-        ('position_size', 0.9),
+        ('position_size', 1.0),
     )
 
     def __init__(self):
@@ -234,7 +234,7 @@ class BollingerBandsStrategy(bt.Strategy):
     params = (
         ('bb_period', 20),
         ('bb_dev', 2.0),
-        ('position_size', 0.9),
+        ('position_size', 1.0),
     )
 
     def __init__(self):
@@ -275,7 +275,7 @@ class MomentumStrategy(bt.Strategy):
     params = (
         ('momentum_period', 14),
         ('momentum_threshold', 0.02),  # 2%
-        ('position_size', 0.9),
+        ('position_size', 1.0),
     )
 
     def __init__(self):
@@ -317,7 +317,7 @@ class HybridStrategy(bt.Strategy):
         ('rsi_period', 14),
         ('rsi_oversold', 35),
         ('rsi_overbought', 65),
-        ('position_size', 0.9),
+        ('position_size', 1.0),
     )
 
     def __init__(self):

@@ -23,7 +23,7 @@ class RSI_MA_Strategy(bt.Strategy):
         ('overbought_level', 55),     # Уровень перекупленности RSI (еще больше ослаблено)
         ('stop_loss', 0.03),          # Стоп-лосс в процентах (3%)
         ('take_profit', 0.08),        # Тейк-профит в процентах (8%)
-        ('position_size', 0.95),      # Размер позиции от доступного капитала
+        ('position_size', 1.0),      # Размер позиции от доступного капитала
         ('min_bars', 35),             # Минимум баров для начала торговли
     )
 
@@ -166,7 +166,7 @@ class SimpleMovingAverageCrossover(bt.Strategy):
     params = (
         ('ma_fast', 10),      # Период быстрой MA
         ('ma_slow', 30),      # Период медленной MA
-        ('position_size', 0.9), # Размер позиции
+        ('position_size', 1.0), # Размер позиции
     )
 
     def __init__(self):

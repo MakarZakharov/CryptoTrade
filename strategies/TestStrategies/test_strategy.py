@@ -10,7 +10,7 @@ class ProfitableBTCStrategy(bt.Strategy):
         ('rsi_period', 14),
         ('rsi_oversold', 30),
         ('rsi_overbought', 70),
-        ('position_size', 0.95),
+        ('position_size', 1.0),
     )
 
     def init(self):

@@ -16,23 +16,33 @@ warnings.filterwarnings('ignore')
 
 
 class AdvancedSizer(bt.Sizer):
-    """Продвинутый сайзер с учетом риск-менеджмента"""
-    
-    params = (
-        ('position_size', 0.95),
-        ('max_risk_per_trade', 0.02),  # 2% риска на сделку
-        ('use_fixed_size', False),
-    )
-    
+    """Сайзер который ОБЯЗАТЕЛЬНО читает размер позиции из стратегии"""
+
     def _getsizing(self, comminfo, cash, data, isbuy):
-        if self.params.use_fixed_size:
-            # Фиксированный размер позиции
-            size = (cash * self.params.position_size) / data.close[0]
-        else:
-            # Размер на основе риска
-            size = (cash * self.params.max_risk_per_trade) / data.close[0]
-        
-        return int(size) if size > 0 else 0
+        # Получаем ссылку на стратегию
+        strategy = self.strategy
+
+        # ОБЯЗАТЕЛЬНАЯ проверка наличия параметра position_size
+        if not hasattr(strategy, 'params') or not hasattr(strategy.params, 'position_size'):
+            raise RuntimeError(
+                f"❌ КРИТИЧЕСКАЯ ОШИБКА: Стратегия {strategy.__class__.__name__} "
+                f"не имеет обязательного параметра 'position_size'!\n"
+                f"Добавьте в params стратегии: ('position_size', 0.95)"
+            )
+
+        position_size = strategy.params.position_size
+
+        # Валидация значения
+        if not isinstance(position_size, (int, float)) or position_size <= 0 or position_size > 1:
+            raise ValueError(
+                f"❌ ОШИБКА: position_size должен быть числом от 0 до 1, "
+                f"получено: {position_size} в стратегии {strategy.__class__.__name__}"
+            )
+
+        # Рассчитываем размер позиции ТОЛЬКО из стратегии
+        size = (cash * position_size) / data.close[0]
+
+        return max(size, 0.001) if size > 0 else 0
 
 
 class EnhancedCommissionInfo(bt.CommInfoBase):
@@ -259,29 +269,33 @@ class DataManager:
 class UniversalBacktester:
     """Универсальный бэктестер с расширенным функционалом"""
 
-    def __init__(self, 
+    def __init__(self,
                  initial_cash: float = 100000,
                  commission: float = 0.001,
                  spread: float = 0.0005,
                  slippage: float = 0.0002,
-                 data_root_path: str = None):
-        
+                 data_root_path: str = None,
+                 require_position_size: bool = True):  # Добавляем параметр
+
         self.initial_cash = initial_cash
         self.commission = commission
         self.spread = spread
         self.slippage = slippage
-        
+        self.require_position_size = require_position_size  # Сохраняем параметр
+
         # Менеджеры
         self.data_manager = DataManager(data_root_path)
         self.strategies_registry = {}
         
         print("🔍 Инициализация универсального бэктестера...")
+        if self.require_position_size:
+            print("⚠️  ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА: Все стратегии должны иметь 'position_size'!")
         self._discover_strategies()
 
     def _discover_strategies(self):
         """Автоматическое обнаружение стратегий"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        
+
         possible_paths = [
             os.path.join(current_dir, '../../../strategies/TestStrategies/'),
             os.path.join(current_dir, '../../strategies/TestStrategies/'),
@@ -302,7 +316,7 @@ class UniversalBacktester:
             return
 
         print(f"📁 Сканирую стратегии: {strategies_path}")
-        
+
         if strategies_path not in sys.path:
             sys.path.insert(0, strategies_path)
 
@@ -315,8 +329,59 @@ class UniversalBacktester:
 
         print(f"✅ Загружено стратегий: {strategies_found}")
 
+    def _validate_strategy_position_size(self, strategy_class, strategy_name: str) -> bool:
+        """ОБЯЗАТЕЛЬНАЯ валидация наличия параметра размера позиции"""
+        if not self.require_position_size:
+            return True
+
+        if not hasattr(strategy_class, 'params'):
+            raise ValueError(
+                f"❌ ОШИБКА СТРАТЕГИИ '{strategy_name}': "
+                f"Отсутствует секция params!\n"
+                f"Добавьте: params = (('position_size', 0.95),)"
+            )
+
+        params_attr = getattr(strategy_class, 'params')
+        found_position_size = False
+
+        # Проверяем разные форматы params
+        if isinstance(params_attr, (tuple, list)):
+            for param in params_attr:
+                if isinstance(param, tuple) and len(param) >= 2:
+                    if param[0] == 'position_size':
+                        found_position_size = True
+                        break
+
+        elif isinstance(params_attr, dict):
+            if 'position_size' in params_attr:
+                found_position_size = True
+
+        elif hasattr(params_attr, '__dict__'):
+            if hasattr(params_attr, 'position_size'):
+                found_position_size = True
+
+        # Если НЕ найден параметр position_size - ОШИБКА
+        if not found_position_size:
+            raise ValueError(
+                f"❌ ОШИБКА СТРАТЕГИИ '{strategy_name}': "
+                f"ОТСУТСТВУЕТ ОБЯЗАТЕЛЬНЫЙ ПАРАМЕТР 'position_size'!\n\n"
+                f"🔧 ИСПРАВЛЕНИЕ:\n"
+                f"Добавьте в стратегию:\n"
+                f"params = (\n"
+                f"    ('position_size', 0.95),  # 95% от капитала\n"
+                f"    # ... остальные параметры\n"
+                f")\n\n"
+                f"💡 Примеры значений:\n"
+                f"• 0.95 = 95% капитала (агрессивно)\n"
+                f"• 0.50 = 50% капитала (умеренно)\n"
+                f"• 0.10 = 10% капитала (консервативно)\n\n"
+                f"⚠️  Отключить проверку: require_position_size=False"
+            )
+
+        return True
+
     def _load_strategies_from_module(self, module_name: str, module_path: str) -> int:
-        """Загрузка стратегий из модуля"""
+        """Загрузка стратегий с ОБЯЗАТЕЛЬНОЙ проверкой position_size"""
         strategies_loaded = 0
         
         try:
@@ -333,6 +398,9 @@ class UniversalBacktester:
             for name, obj in inspect.getmembers(module):
                 if self._is_strategy_class(obj):
                     try:
+                        # ДОБАВЛЯЕМ ОБЯЗАТЕЛЬНУЮ валидацию position_size
+                        self._validate_strategy_position_size(obj, name)
+
                         default_params = self._extract_strategy_params(obj)
                         
                         unique_key = f"{name}_{module_name}" if name in self.strategies_registry else name
@@ -346,8 +414,16 @@ class UniversalBacktester:
                             'original_name': name
                         }
                         strategies_loaded += 1
-                        print(f"✅ {name} (параметров: {len(default_params)})")
 
+                        # Показываем размер позиции
+                        size_value = default_params.get('position_size', 'НЕТ')
+                        print(f"✅ {name} (position_size: {size_value})")
+
+                    except ValueError as e:
+                        # Ошибка валидации - НЕ загружаем стратегию
+                        print(f"❌ {name}: ПРОПУЩЕНА")
+                        print(f"   {str(e)}")
+                        print()
                     except Exception as e:
                         print(f"⚠️ Ошибка загрузки {name}: {e}")
 
@@ -555,98 +631,7 @@ class UniversalBacktester:
                 print(f"❌ Ошибка выполнения: {str(e)}")
             raise
 
-    def run_multi_data_backtest(self,
-                               strategy_name: str,
-                               data_configs: List[Dict[str, str]],
-                               strategy_params: Dict[str, Any] = None,
-                               show_individual_plots: bool = False,
-                               verbose: bool = True) -> pd.DataFrame:
-        """Запуск бэктеста на множественных данных"""
-        
-        print(f"\n🔍 МУЛЬТИ-ТЕСТ СТРАТЕГИИ: {strategy_name}")
-        print("=" * 80)
-        print(f"📊 Наборов данных: {len(data_configs)}")
-        print()
 
-        results = []
-        failed_tests = []
-
-        for i, config in enumerate(data_configs, 1):
-            exchange = config.get('exchange', 'binance')
-            symbol = config.get('symbol', 'BTCUSDT')
-            timeframe = config.get('timeframe', '1d')
-            start_date = config.get('start_date')
-            end_date = config.get('end_date')
-
-            test_name = f"{exchange}_{symbol}_{timeframe}"
-            print(f"⏳ [{i}/{len(data_configs)}] Тестирование на {test_name}")
-
-            try:
-                result = self.run_single_backtest(
-                    strategy_name=strategy_name,
-                    exchange=exchange,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    start_date=start_date,
-                    end_date=end_date,
-                    strategy_params=strategy_params,
-                    show_plot=show_individual_plots,
-                    verbose=False,
-                    suppress_strategy_errors=True
-                )
-                
-                result['test_name'] = test_name
-                result['exchange'] = exchange
-                result['symbol'] = symbol
-                result['timeframe'] = timeframe
-                
-                results.append(result)
-                print(f"✅ {test_name}: {result['total_return']:+.2f}% | {result.get('total_trades', 0)} сделок")
-
-            except Exception as e:
-                error_msg = str(e)
-                print(f"❌ {test_name}: {error_msg}")
-                failed_tests.append((test_name, error_msg))
-
-        if failed_tests:
-            print(f"\n⚠️ Неудачные тесты ({len(failed_tests)}):")
-            for test_name, error in failed_tests:
-                print(f"   • {test_name}: {error}")
-
-        if not results:
-            print("❌ Нет успешных результатов")
-            return pd.DataFrame()
-
-        # Создание сводной таблицы
-        comparison_df = pd.DataFrame(results).sort_values('total_return', ascending=False)
-        
-        key_metrics = [
-            'test_name', 'exchange', 'symbol', 'timeframe', 'total_return', 
-            'profit_loss', 'total_trades', 'win_rate', 'profit_factor', 
-            'sharpe_ratio', 'max_drawdown'
-        ]
-        available_metrics = [col for col in key_metrics if col in comparison_df.columns]
-        display_df = comparison_df[available_metrics].copy()
-
-        print(f"\n🏆 РЕЗУЛЬТАТЫ МУЛЬТИ-ТЕСТА:")
-        print("=" * 120)
-        print(display_df.to_string(index=False, float_format='%.2f'))
-
-        # Статистика
-        if len(results) > 1:
-            avg_return = comparison_df['total_return'].mean()
-            std_return = comparison_df['total_return'].std()
-            best_test = comparison_df.iloc[0]
-            worst_test = comparison_df.iloc[-1]
-
-            print(f"\n📊 СТАТИСТИКА:")
-            print(f"   Средняя доходность: {avg_return:.2f}%")
-            print(f"   Стандартное отклонение: {std_return:.2f}%")
-            print(f"   🥇 Лучший тест: {best_test['test_name']} ({best_test['total_return']:+.2f}%)")
-            print(f"   🥉 Худший тест: {worst_test['test_name']} ({worst_test['total_return']:+.2f}%)")
-
-        print("=" * 120)
-        return display_df
 
     def compare_strategies(self,
                           strategy_names: List[str] = None,
@@ -741,149 +726,8 @@ class UniversalBacktester:
         print("=" * 100)
         return display_df
 
-    def optimize_strategy(self,
-                         strategy_name: str,
-                         optimization_params: Dict[str, tuple],
-                         exchange: str = "binance",
-                         symbol: str = "BTCUSDT",
-                         timeframe: str = "1d",
-                         start_date: str = None,
-                         end_date: str = None,
-                         max_iterations: int = 100) -> pd.DataFrame:
-        """Оптимизация параметров стратегии"""
-        
-        print(f"\n🔧 ОПТИМИЗАЦИЯ СТРАТЕГИИ: {strategy_name}")
-        print("=" * 60)
-        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
-        print(f"⚙️ Параметры оптимизации: {list(optimization_params.keys())}")
 
-        if strategy_name not in self.strategies_registry:
-            raise ValueError(f"Стратегия '{strategy_name}' не найдена")
 
-        strategy_info = self.strategies_registry[strategy_name]
-        strategy_class = strategy_info['class']
-
-        # Настройка Cerebro для оптимизации
-        cerebro = bt.Cerebro(optreturn=False)
-        
-        # Загрузка данных
-        data_feed = self.data_manager.load_data(exchange, symbol, timeframe, start_date, end_date)
-        cerebro.adddata(data_feed)
-        
-        # Настройка брокера
-        cerebro.broker.setcash(self.initial_cash)
-        comminfo = EnhancedCommissionInfo(
-            commission=self.commission,
-            spread=self.spread,
-            slippage=self.slippage
-        )
-        cerebro.broker.addcommissioninfo(comminfo)
-        
-        # Добавление анализаторов
-        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
-
-        # Настройка параметров оптимизации
-        opt_params = {}
-        for param_name, (min_val, max_val, step) in optimization_params.items():
-            if isinstance(min_val, float):
-                # Для float параметров
-                values = np.arange(min_val, max_val + step, step)
-                opt_params[param_name] = [round(v, 4) for v in values]
-            else:
-                # Для int параметров
-                opt_params[param_name] = range(int(min_val), int(max_val) + 1, int(step))
-
-        cerebro.optstrategy(strategy_class, **opt_params)
-        print(f"🚀 Запуск оптимизации...")
-
-        # Запуск оптимизации
-        optimization_results = cerebro.run(maxcpus=1)
-
-        # Обработка результатов
-        results_list = []
-        for result in optimization_results:
-            strategy_result = result[0]
-            params = dict(strategy_result.params._getitems())
-
-            final_value = strategy_result.broker.getvalue()
-            total_return = (final_value - self.initial_cash) / self.initial_cash * 100
-
-            # Получение метрик
-            sharpe_ratio = 0
-            total_trades = 0
-            win_rate = 0
-            
-            try:
-                sharpe_analysis = strategy_result.analyzers.sharpe.get_analysis()
-                sharpe_ratio = sharpe_analysis.get('sharperatio', 0) or 0
-            except:
-                pass
-
-            try:
-                trades_analysis = strategy_result.analyzers.trades.get_analysis()
-                total_dict = trades_analysis.get('total', {})
-                won_dict = trades_analysis.get('won', {})
-                
-                total_trades = total_dict.get('total', 0)
-                won_trades = won_dict.get('total', 0)
-                win_rate = (won_trades / max(total_trades, 1)) * 100
-            except:
-                pass
-
-            result_data = {
-                'final_value': final_value,
-                'total_return': total_return,
-                'sharpe_ratio': sharpe_ratio,
-                'total_trades': total_trades,
-                'win_rate': win_rate,
-                **{k: v for k, v in params.items() if k in optimization_params}
-            }
-            results_list.append(result_data)
-
-        # Создание DataFrame с результатами
-        results_df = pd.DataFrame(results_list).sort_values('total_return', ascending=False)
-
-        print(f"\n🏆 РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ:")
-        print("=" * 80)
-        print(results_df.head(10).to_string(index=False, float_format='%.2f'))
-
-        if not results_df.empty:
-            best_result = results_df.iloc[0]
-            print(f"\n🥇 ЛУЧШИЕ ПАРАМЕТРЫ:")
-            for param in optimization_params.keys():
-                print(f"   • {param}: {best_result[param]}")
-            print(f"   📈 Доходность: {best_result['total_return']:+.2f}%")
-            print(f"   📊 Sharpe Ratio: {best_result['sharpe_ratio']:.3f}")
-            print(f"   🎯 Винрейт: {best_result['win_rate']:.1f}%")
-
-        return results_df
-
-    def _print_backtest_header(self, strategy_name: str, exchange: str, symbol: str, 
-                              timeframe: str, start_date: str, end_date: str, params: Dict):
-        """Вывод заголовка бэктеста"""
-        print(f"\n🚀 ЗАПУСК БЭКТЕСТА: {strategy_name}")
-        print("=" * 60)
-        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
-        if start_date or end_date:
-            print(f"📅 Период: {start_date or 'начало'} - {end_date or 'конец'}")
-        print(f"💰 Начальный капитал: ${self.initial_cash:,}")
-        print(f"💸 Комиссия: {self.commission:.3f} | Спред: {self.spread:.4f} | Проскальзывание: {self.slippage:.4f}")
-        
-        if params:
-            print(f"⚙️ Параметры:")
-            for param, value in params.items():
-                print(f"   • {param}: {value}")
-        print()
-
-    def _add_analyzers(self, cerebro):
-        """Добавление анализаторов"""
-        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
-        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
-        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-        cerebro.addanalyzer(bt.analyzers.SQN, _name='sqn')
 
     def _process_results(self, result, strategy_name: str, params: Dict, 
                         exchange: str, symbol: str, timeframe: str) -> Dict[str, Any]:
@@ -1018,6 +862,36 @@ class UniversalBacktester:
         except Exception as e:
             print(f"⚠️ Ошибка построения графика: {e}")
 
+    def _print_backtest_header(self, strategy_name: str, exchange: str, symbol: str,
+                              timeframe: str, start_date: str, end_date: str, params: Dict):
+        """Вывод заголовка бэктеста"""
+        print(f"\n🚀 ЗАПУСК БЭКТЕСТА: {strategy_name}")
+        print("=" * 60)
+        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
+        if start_date or end_date:
+            print(f"📅 Период: {start_date or 'начало'} - {end_date or 'конец'}")
+        print(f"💰 Начальный капитал: ${self.initial_cash:,}")
+        print(f"💸 Комиссия: {self.commission:.3f} | Спред: {self.spread:.4f} | Проскальзывание: {self.slippage:.4f}")
+
+        if params:
+            print(f"⚙️ Параметры:")
+            for param, value in params.items():
+                print(f"   • {param}: {value}")
+        print()
+
+    def _add_analyzers(self, cerebro):
+        """Добавление анализаторов к Cerebro"""
+        # Анализатор сделок
+        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+
+        # Анализатор Sharpe Ratio
+        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe', riskfreerate=0.0)
+
+        # Анализатор просадки
+        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+
+        # Анализатор SQN (System Quality Number)
+        cerebro.addanalyzer(bt.analyzers.SQN, _name='sqn')
 
 # Пример использования
 if __name__ == "__main__":
@@ -1036,25 +910,11 @@ if __name__ == "__main__":
     backtester.run_single_backtest(
         strategy_name="SafeProfitableBTCStrategy",
         exchange="binance",
-        symbol="BTCUSDT",
+        symbol="BNBUSDC",
         timeframe="1d"
     )
     
-    # Пример: тестирование на множественных данных
-    data_configs = [
-        {"exchange": "binance", "symbol": "BTCUSDT", "timeframe": "1d"},
-        {"exchange": "binance", "symbol": "ETHUSDT", "timeframe": "1d"},
-        {"exchange": "binance", "symbol": "BTCUSDT", "timeframe": "4h"},
-    ]
-    backtester.run_multi_data_backtest("SafeProfitableBTCStrategy", data_configs)
 
     # Пример: сравнение стратегий
     backtester.compare_strategies()
 
-    # Пример: оптимизация параметров
-    optimization_params = {
-        'ema_fast': (10, 20, 2),
-        'ema_slow': (20, 30, 5),
-        'rsi_period': (10, 20, 2)
-    }
-    backtester.optimize_strategy("SafeProfitableBTCStrategy", optimization_params)

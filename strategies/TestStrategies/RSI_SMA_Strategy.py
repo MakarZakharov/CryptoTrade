@@ -19,7 +19,7 @@ class RSI_SMA_Strategy(bt.Strategy):
         ('sma_slow', 20),
 
         # Управление позициями
-        ('position_size', 0.12),  # 10% от капитала
+        ('position_size', 1.0),  # Изменено с 0.12 на 1.0
         ('stop_loss', 0.02),     # 2% стоп-лосс
         ('take_profit', 0.035),   # 3% тейк-профит
 
@@ -204,7 +204,7 @@ class ScalpingStrategy(bt.Strategy):
         ('rsi_lower', 35),
         ('bb_period', 10),
         ('bb_devfactor', 1.5),
-        ('position_size', 0.05),
+        ('position_size', 1.0),
     )
 
     def __init__(self):
