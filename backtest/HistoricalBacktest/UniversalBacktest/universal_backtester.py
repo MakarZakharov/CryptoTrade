@@ -54,7 +54,7 @@ class EnhancedCommissionInfo(bt.CommInfoBase):
         ('slippage', 0.0002),   # 0.02% проскальзывание
         ('margin', None),
         ('mult', 1.0),
-        ('commtype', bt.CommInfoBase.COMM_PERC),
+      ('commtype', bt.CommInfoBase.COMM_PERC),
     )
 
     def _getcommission(self, size, price, pseudoexec):
@@ -79,7 +79,7 @@ class SilentStrategyWrapper:
     @classmethod
     def wrap_strategy(cls, strategy_class):
         """Создает wrapper для стратегии с подавлением ошибок"""
-        
+
         class WrappedStrategy(strategy_class):
             error_count = 0
             max_errors_to_show = 5
