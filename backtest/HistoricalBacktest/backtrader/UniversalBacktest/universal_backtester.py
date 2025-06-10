@@ -15,7 +15,28 @@ import numpy as np
 warnings.filterwarnings('ignore')
 
 
+class SafetyUtils:
+    """Утилиты для безопасности и защиты от ошибок"""
 
+    @staticmethod
+    def safe_value(value: float, min_value: float = 0.01) -> float:
+        """Безопасное значение с защитой от отрицательных балансов"""
+        return max(value, min_value)
+
+    @staticmethod
+    def safe_return(current: float, initial: float) -> float:
+        """Безопасный расчет доходности с ограничениями"""
+        if initial <= 0:
+            return 0
+        return_pct = (current - initial) / initial * 100
+        return max(return_pct, -99.99)  # Ограничиваем потери до -99.99%
+
+    @staticmethod
+    def validate_position_size(position_size: Any, strategy_name: str) -> float:
+        """Валидация размера позиции"""
+        if not isinstance(position_size, (int, float)) or position_size <= 0 or position_size > 0.8:
+            raise ValueError(f"❌ position_size должен быть от 0 до 0.8, получено: {position_size} в {strategy_name}")
+        return position_size
 
 
 class StrategyValidator:
@@ -167,23 +188,44 @@ class TradeAnalyzer:
 
 
 
-class BasicSizer(bt.Sizer):
-    """Простой сайзер"""
+class AdvancedSizer(bt.Sizer):
+    """Оптимизированный сайзер с защитой от отрицательного баланса"""
 
     def _getsizing(self, comminfo, cash, data, isbuy):
         strategy = self.strategy
-        
-        if not hasattr(strategy.params, 'position_size'):
+
+        # Проверка параметра position_size
+        if not hasattr(strategy, 'params') or not hasattr(strategy.params, 'position_size'):
+            raise RuntimeError(f"❌ {strategy.__class__.__name__} не имеет 'position_size'!")
+
+        position_size = SafetyUtils.validate_position_size(strategy.params.position_size, strategy.__class__.__name__)
+
+        # Расчет резервов и доступного капитала
+        min_cash_reserve = max(strategy.broker.startingcash * 0.05, 1000)
+        if cash <= min_cash_reserve:
+            if not getattr(strategy, '_cash_warning_shown', False):
+                print(f"⚠️ Недостаточно средств! Cash: ${cash:.2f}")
+                strategy._cash_warning_shown = True
             return 0
-        
-        position_size = strategy.params.position_size
+
+        available_cash = cash - min_cash_reserve
         price = data.close[0]
-        
-        if price <= 0 or cash <= 0:
+        if price <= 0:
             return 0
-        
-        size = (cash * position_size) / price
-        return size
+
+        # Расчет размера позиции с комиссиями
+        commission_rate = getattr(comminfo, 'p', {}).get('commission', 0.001) * 3
+        target_value = available_cash * position_size / (1 + commission_rate)
+        size = target_value / price
+
+        # Ограничения безопасности
+        max_size = min(
+            available_cash / price * 0.90,  # 90% от доступного
+            strategy.broker.startingcash * 0.5 / price  # 50% от общего
+        )
+
+        final_size = min(size, max_size)
+        return final_size if final_size >= (10 / price) else 0  # Минимум $10
 
 
 class EnhancedCommissionInfo(bt.CommInfoBase):
@@ -680,11 +722,13 @@ class UniversalBacktester:
             data_feed = self.data_manager.load_data(exchange, symbol, timeframe, start_date, end_date)
             cerebro.adddata(data_feed)
 
-            # Настройка брокера с защитой от отрицательного баланса
+            # Настройка брокера с ЗАЩИТОЙ ОТ ОТРИЦАТЕЛЬНОГО БАЛАНСА
             cerebro.broker.setcash(self.initial_cash)
-            cerebro.broker.set_checksubmit(False)
-            cerebro.broker.set_coc(True)
-            cerebro.broker.set_coo(True)
+            cerebro.broker.set_checksubmit(False)  # Отключаем автоматическую проверку
+            cerebro.broker.set_coc(True)  # Закрытие позиций при недостатке средств
+
+            # КРИТИЧЕСКАЯ ЗАЩИТА: Минимальный резерв для маржин-коллов
+            cerebro.broker.set_coo(True)  # Cancel on close - отмена ордеров при закрытии позиций
 
             # Дополнительная защита через кастомный broker wrapper
             original_getvalue = cerebro.broker.getvalue
