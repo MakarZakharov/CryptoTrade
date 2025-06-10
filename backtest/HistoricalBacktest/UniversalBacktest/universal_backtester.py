@@ -18,44 +18,172 @@ warnings.filterwarnings('ignore')
 
 
 
-class AdvancedSizer(bt.Sizer):
-    """Оптимизированный сайзер с защитой от отрицательного баланса"""
+class StrategyValidator:
+    """Валидатор стратегий"""
+    
+    @staticmethod
+    def validate_strategy(strategy_class, strategy_name: str, require_position_size: bool = True) -> bool:
+        """Комплексная валидация стратегии"""
+        if not require_position_size:
+            return True
+            
+        if not hasattr(strategy_class, 'params'):
+            raise ValueError(f"❌ '{strategy_name}': Отсутствует секция params!")
+        
+        return StrategyValidator._check_position_size_param(strategy_class, strategy_name)
+    
+    @staticmethod
+    def _check_position_size_param(strategy_class, strategy_name: str) -> bool:
+        """Проверка наличия параметра position_size"""
+        params_attr = getattr(strategy_class, 'params')
+        
+        # Проверяем разные форматы params
+        if isinstance(params_attr, (tuple, list)):
+            for param in params_attr:
+                if isinstance(param, tuple) and len(param) >= 2 and param[0] == 'position_size':
+                    return True
+        elif isinstance(params_attr, dict) and 'position_size' in params_attr:
+            return True
+        elif hasattr(params_attr, '__dict__') and hasattr(params_attr, 'position_size'):
+            return True
+        
+        raise ValueError(f"❌ '{strategy_name}': ОТСУТСТВУЕТ 'position_size'! Добавьте: params = (('position_size', 0.95),)")
+
+
+class ResultsPrinter:
+    """Класс для вывода результатов"""
+    
+    @staticmethod
+    def print_backtest_header(strategy_name: str, exchange: str, symbol: str, timeframe: str,
+                            start_date: str, end_date: str, initial_cash: float, 
+                            commission: float, spread: float, slippage: float, params: Dict):
+        """Компактный заголовок бэктеста"""
+        print(f"\n🚀 {strategy_name}")
+        print("=" * 60)
+        print(f"📈 {exchange}:{symbol} ({timeframe}) | 💰 ${initial_cash:,}")
+        if start_date or end_date:
+            print(f"📅 {start_date or 'начало'} - {end_date or 'конец'}")
+        print(f"💸 Комиссия: {commission:.3f} | Спред: {spread:.4f} | Проскальзывание: {slippage:.4f}")
+        if params:
+            key_params = {k: v for k, v in list(params.items())[:3]}  # Показываем только первые 3
+            print(f"⚙️ Параметры: {key_params}")
+        print()
+    
+    @staticmethod
+    def print_results(results: Dict[str, Any], detailed: bool = True):
+        """Компактный вывод результатов"""
+        print(f"\n📊 РЕЗУЛЬТАТЫ: {results['strategy_name']}")
+        print("=" * 50)
+        
+        # Основные метрики
+        print(f"💰 ${results['initial_value']:,.0f} → ${results['final_value']:,.0f}")
+        print(f"📈 Доходность: {results['total_return']:+.2f}%")
+        print(f"💵 P&L: ${results['profit_loss']:+,.2f}")
+        
+        # Торговые метрики
+        if results.get('total_trades', 0) > 0:
+            print(f"🔄 Сделок: {results['total_trades']} | ✅ {results.get('won_trades', 0)} | ❌ {results.get('lost_trades', 0)}")
+            print(f"🎯 Винрейт: {results.get('win_rate', 0):.1f}% | ⚖️ PF: {results.get('profit_factor', 0):.2f}")
+        
+        # Дополнительные метрики (если детализированный вывод)
+        if detailed and 'sharpe_ratio' in results:
+            print(f"📊 Sharpe: {results['sharpe_ratio']:.2f} | 📉 DD: {results['max_drawdown']:.1f}% | SQN: {results.get('sqn', 0):.1f}")
+        
+        print("=" * 50)
+
+
+class TradeAnalyzer:
+    """Анализатор торговых операций"""
+    
+    @staticmethod
+    def analyze_all(result) -> Dict[str, Any]:
+        """Комплексный анализ всех метрик"""
+        analysis = {}
+        
+        # Анализ сделок
+        try:
+            trades = result.analyzers.trades.get_analysis()
+            analysis.update(TradeAnalyzer._analyze_trades(trades) if trades else TradeAnalyzer._empty_trades())
+        except:
+            analysis.update(TradeAnalyzer._empty_trades())
+        
+        # Дополнительные метрики
+        analysis.update(TradeAnalyzer._analyze_metrics(result))
+        
+        return analysis
+    
+    @staticmethod
+    def _analyze_trades(trades: Dict) -> Dict[str, Any]:
+        """Анализ торговых операций"""
+        total = trades.get('total', {})
+        won = trades.get('won', {})
+        lost = trades.get('lost', {})
+
+        total_trades = total.get('total', 0)
+        won_trades = won.get('total', 0)
+        
+        return {
+            'total_trades': total_trades,
+            'won_trades': won_trades,
+            'lost_trades': lost.get('total', 0),
+            'win_rate': (won_trades / max(total_trades, 1)) * 100,
+            'profit_factor': abs(won.get('pnl', {}).get('total', 0)) / max(abs(lost.get('pnl', {}).get('total', 0)), 1),
+            'won_pnl_total': won.get('pnl', {}).get('total', 0),
+            'lost_pnl_total': lost.get('pnl', {}).get('total', 0)
+        }
+    
+    @staticmethod
+    def _empty_trades() -> Dict[str, Any]:
+        """Пустой анализ сделок"""
+        return {'total_trades': 0, 'won_trades': 0, 'lost_trades': 0, 'win_rate': 0, 'profit_factor': 0, 'won_pnl_total': 0, 'lost_pnl_total': 0}
+    
+    @staticmethod
+    def _analyze_metrics(result) -> Dict[str, Any]:
+        """Анализ дополнительных метрик"""
+        analysis = {'sharpe_ratio': 0, 'max_drawdown': 0, 'max_drawdown_period': 0, 'sqn': 0}
+        
+        try:
+            sharpe = result.analyzers.sharpe.get_analysis()
+            analysis['sharpe_ratio'] = sharpe.get('sharperatio', 0) or 0
+        except:
+            pass
+            
+        try:
+            drawdown = result.analyzers.drawdown.get_analysis()
+            analysis['max_drawdown'] = drawdown.get('max', {}).get('drawdown', 0) or 0
+            analysis['max_drawdown_period'] = drawdown.get('max', {}).get('len', 0) or 0
+        except:
+            pass
+            
+        try:
+            sqn = result.analyzers.sqn.get_analysis()
+            analysis['sqn'] = sqn.get('sqn', 0) or 0
+        except:
+            pass
+            
+        return analysis
+
+
+
+
+
+class BasicSizer(bt.Sizer):
+    """Простой сайзер"""
 
     def _getsizing(self, comminfo, cash, data, isbuy):
         strategy = self.strategy
         
-        # Проверка параметра position_size
-        if not hasattr(strategy, 'params') or not hasattr(strategy.params, 'position_size'):
-            raise RuntimeError(f"❌ {strategy.__class__.__name__} не имеет 'position_size'!")
-        
-        position_size = SafetyUtils.validate_position_size(strategy.params.position_size, strategy.__class__.__name__)
-        
-        # Расчет резервов и доступного капитала
-        min_cash_reserve = max(strategy.broker.startingcash * 0.05, 1000)
-        if cash <= min_cash_reserve:
-            if not getattr(strategy, '_cash_warning_shown', False):
-                print(f"⚠️ Недостаточно средств! Cash: ${cash:.2f}")
-                strategy._cash_warning_shown = True
+        if not hasattr(strategy.params, 'position_size'):
             return 0
         
-        available_cash = cash - min_cash_reserve
+        position_size = strategy.params.position_size
         price = data.close[0]
-        if price <= 0:
+        
+        if price <= 0 or cash <= 0:
             return 0
         
-        # Расчет размера позиции с комиссиями
-        commission_rate = getattr(comminfo, 'p', {}).get('commission', 0.001) * 3
-        target_value = available_cash * position_size / (1 + commission_rate)
-        size = target_value / price
-        
-        # Ограничения безопасности
-        max_size = min(
-            available_cash / price * 0.90,  # 90% от доступного
-            strategy.broker.startingcash * 0.5 / price  # 50% от общего
-        )
-        
-        final_size = min(size, max_size)
-        return final_size if final_size >= (10 / price) else 0  # Минимум $10
+        size = (cash * position_size) / price
+        return size
 
 
 class EnhancedCommissionInfo(bt.CommInfoBase):
@@ -285,13 +413,13 @@ class UniversalBacktester:
                  spread: float = 0.0005,
                  slippage: float = 0.0002,
                  data_root_path: str = None,
-                 require_position_size: bool = True):  # Добавляем параметр
+                 require_position_size: bool = True):
 
         self.initial_cash = initial_cash
         self.commission = commission
         self.spread = spread
         self.slippage = slippage
-        self.require_position_size = require_position_size  # Сохраняем параметр
+        self.require_position_size = require_position_size
 
         # Менеджеры
         self.data_manager = DataManager(data_root_path)
@@ -339,56 +467,7 @@ class UniversalBacktester:
 
         print(f"✅ Загружено стратегий: {strategies_found}")
 
-    def _validate_strategy_position_size(self, strategy_class, strategy_name: str) -> bool:
-        """ОБЯЗАТЕЛЬНАЯ валидация наличия параметра размера позиции"""
-        if not self.require_position_size:
-            return True
 
-        if not hasattr(strategy_class, 'params'):
-            raise ValueError(
-                f"❌ ОШИБКА СТРАТЕГИИ '{strategy_name}': "
-                f"Отсутствует секция params!\n"
-                f"Добавьте: params = (('position_size', 0.95),)"
-            )
-
-        params_attr = getattr(strategy_class, 'params')
-        found_position_size = False
-
-        # Проверяем разные форматы params
-        if isinstance(params_attr, (tuple, list)):
-            for param in params_attr:
-                if isinstance(param, tuple) and len(param) >= 2:
-                    if param[0] == 'position_size':
-                        found_position_size = True
-                        break
-
-        elif isinstance(params_attr, dict):
-            if 'position_size' in params_attr:
-                found_position_size = True
-
-        elif hasattr(params_attr, '__dict__'):
-            if hasattr(params_attr, 'position_size'):
-                found_position_size = True
-
-        # Если НЕ найден параметр position_size - ОШИБКА
-        if not found_position_size:
-            raise ValueError(
-                f"❌ ОШИБКА СТРАТЕГИИ '{strategy_name}': "
-                f"ОТСУТСТВУЕТ ОБЯЗАТЕЛЬНЫЙ ПАРАМЕТР 'position_size'!\n\n"
-                f"🔧 ИСПРАВЛЕНИЕ:\n"
-                f"Добавьте в стратегию:\n"
-                f"params = (\n"
-                f"    ('position_size', 0.95),  # 95% от капитала\n"
-                f"    # ... остальные параметры\n"
-                f")\n\n"
-                f"💡 Примеры значений:\n"
-                f"• 0.95 = 95% капитала (агрессивно)\n"
-                f"• 0.50 = 50% капитала (умеренно)\n"
-                f"• 0.10 = 10% капитала (консервативно)\n\n"
-                f"⚠️  Отключить проверку: require_position_size=False"
-            )
-
-        return True
 
     def _load_strategies_from_module(self, module_name: str, module_path: str) -> int:
         """Загрузка стратегий с ОБЯЗАТЕЛЬНОЙ проверкой position_size"""
@@ -408,8 +487,8 @@ class UniversalBacktester:
             for name, obj in inspect.getmembers(module):
                 if self._is_strategy_class(obj):
                     try:
-                        # ДОБАВЛЯЕМ ОБЯЗАТЕЛЬНУЮ валидацию position_size
-                        self._validate_strategy_position_size(obj, name)
+                        # ОБЯЗАТЕЛЬНАЯ валидация position_size
+                        StrategyValidator.validate_strategy(obj, name, self.require_position_size)
 
                         default_params = self._extract_strategy_params(obj)
 
@@ -582,8 +661,9 @@ class UniversalBacktester:
             final_params.update(strategy_params)
 
         if verbose:
-            self._print_backtest_header(strategy_name, exchange, symbol, timeframe,
-                                      start_date, end_date, final_params)
+            ResultsPrinter.print_backtest_header(strategy_name, exchange, symbol, timeframe,
+                                               start_date, end_date, self.initial_cash,
+                                               self.commission, self.spread, self.slippage, final_params)
 
         try:
             # Создание Cerebro
@@ -600,13 +680,11 @@ class UniversalBacktester:
             data_feed = self.data_manager.load_data(exchange, symbol, timeframe, start_date, end_date)
             cerebro.adddata(data_feed)
 
-            # Настройка брокера с ЗАЩИТОЙ ОТ ОТРИЦАТЕЛЬНОГО БАЛАНСА
+            # Настройка брокера с защитой от отрицательного баланса
             cerebro.broker.setcash(self.initial_cash)
-            cerebro.broker.set_checksubmit(False)  # Отключаем автоматическую проверку
-            cerebro.broker.set_coc(True)  # Закрытие позиций при недостатке средств
-            
-            # КРИТИЧЕСКАЯ ЗАЩИТА: Минимальный резерв для маржин-коллов
-            cerebro.broker.set_coo(True)  # Cancel on close - отмена ордеров при закрытии позиций
+            cerebro.broker.set_checksubmit(False)
+            cerebro.broker.set_coc(True)
+            cerebro.broker.set_coo(True)
 
             # Дополнительная защита через кастомный broker wrapper
             original_getvalue = cerebro.broker.getvalue
@@ -636,19 +714,14 @@ class UniversalBacktester:
 
             result = results[0]
 
-            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: Валидация финального значения
-            final_value = result.broker.getvalue()
-            if final_value < 0:
-                print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Обнаружен отрицательный баланс: ${final_value:.2f}")
-                print(f"   Устанавливаем минимальное значение: $0.01")
-                final_value = 0.01
+
 
             # Обработка результатов
             analysis_result = self._process_results(result, strategy_name, final_params,
                                                   exchange, symbol, timeframe)
 
             if verbose:
-                self._print_results(analysis_result)
+                ResultsPrinter.print_results(analysis_result)
             
             if show_plot:
                 self._plot_results(cerebro, strategy_name, exchange, symbol, timeframe)
@@ -761,24 +834,8 @@ class UniversalBacktester:
     def _process_results(self, result, strategy_name: str, params: Dict,
                         exchange: str, symbol: str, timeframe: str) -> Dict[str, Any]:
         """Обработка результатов бэктеста"""
-        final_value = result.broker.getvalue()
-
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Защита от отрицательного баланса
-        if final_value < 0:
-            print(f"⚠️ ИСПРАВЛЕНИЕ: Отрицательный баланс ${final_value:.2f} -> $0.01")
-            final_value = 0.01
-
-        # Ограничиваем максимальную потерю до -99.99%
-        min_allowed_value = self.initial_cash * 0.0001  # 0.01% от начального капитала
-        if final_value < min_allowed_value:
-            final_value = min_allowed_value
-
-        total_return = (final_value - self.initial_cash) / self.initial_cash * 100
-
-        # Дополнительная защита от экстремальных значений доходности
-        if total_return < -99.99:
-            total_return = -99.99
-            print(f"⚠️ ИСПРАВЛЕНИЕ: Доходность ограничена до -99.99%")
+        final_value = SafetyUtils.safe_value(result.broker.getvalue())
+        total_return = SafetyUtils.safe_return(final_value, self.initial_cash)
 
         analysis_result = {
             'strategy_name': strategy_name,
@@ -792,110 +849,12 @@ class UniversalBacktester:
             'parameters': params
         }
 
-        # Анализ сделок
-        try:
-            trades = result.analyzers.trades.get_analysis()
-            analysis_result.update(self._analyze_trades(trades) if trades else self._empty_trades())
-        except Exception:
-            analysis_result.update(self._empty_trades())
-
-        # Дополнительные метрики
-        try:
-            analysis_result.update(self._analyze_metrics(result))
-        except Exception:
-            analysis_result.update({
-                'sharpe_ratio': 0, 'max_drawdown': 0, 'max_drawdown_period': 0, 'sqn': 0
-            })
+        # Анализ торговых операций и метрик
+        analysis_result.update(TradeAnalyzer.analyze_all(result))
 
         return analysis_result
 
-    def _analyze_trades(self, trades: Dict) -> Dict[str, Any]:
-        """Анализ торговых операций"""
-        total = trades.get('total', {})
-        won = trades.get('won', {})
-        lost = trades.get('lost', {})
 
-        result = {
-            'total_trades': total.get('total', 0),
-            'won_trades': won.get('total', 0),
-            'lost_trades': lost.get('total', 0),
-            'won_pnl_total': won.get('pnl', {}).get('total', 0),
-            'lost_pnl_total': lost.get('pnl', {}).get('total', 0)
-        }
-
-        # Производные метрики
-        total_trades = result['total_trades']
-        won_trades = result['won_trades']
-        result['win_rate'] = (won_trades / max(total_trades, 1)) * 100
-
-        gross_profit = abs(result['won_pnl_total'])
-        gross_loss = abs(result['lost_pnl_total'])
-        result['profit_factor'] = gross_profit / max(gross_loss, 1)
-
-        return result
-
-    def _empty_trades(self) -> Dict[str, Any]:
-        """Пустой анализ сделок"""
-        return {
-            'total_trades': 0, 'won_trades': 0, 'lost_trades': 0,
-            'win_rate': 0, 'profit_factor': 0, 'won_pnl_total': 0, 'lost_pnl_total': 0
-        }
-
-    def _analyze_metrics(self, result) -> Dict[str, Any]:
-        """Анализ дополнительных метрик"""
-        analysis = {}
-
-        # Sharpe Ratio
-        try:
-            sharpe = result.analyzers.sharpe.get_analysis()
-            analysis['sharpe_ratio'] = sharpe.get('sharperatio', 0) or 0
-        except:
-            analysis['sharpe_ratio'] = 0
-
-        # Drawdown
-        try:
-            drawdown = result.analyzers.drawdown.get_analysis()
-            analysis['max_drawdown'] = drawdown.get('max', {}).get('drawdown', 0) or 0
-            analysis['max_drawdown_period'] = drawdown.get('max', {}).get('len', 0) or 0
-        except:
-            analysis['max_drawdown'] = 0
-            analysis['max_drawdown_period'] = 0
-
-        # SQN
-        try:
-            sqn = result.analyzers.sqn.get_analysis()
-            analysis['sqn'] = sqn.get('sqn', 0) or 0
-        except:
-            analysis['sqn'] = 0
-
-        return analysis
-
-    def _print_results(self, results: Dict[str, Any]):
-        """Вывод отформатированных результатов"""
-        print("\n📊 РЕЗУЛЬТАТЫ БЭКТЕСТИРОВАНИЯ")
-        print("=" * 60)
-
-        # Основные метрики
-        print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
-        print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
-        print(f"📈 Общая доходность:      {results['total_return']:+.2f}%")
-        print(f"💵 Прибыль/Убыток:        ${results['profit_loss']:+,.2f}")
-
-        # Торговые метрики
-        if 'total_trades' in results:
-            print(f"\n🔄 Всего сделок:          {results['total_trades']}")
-            print(f"✅ Выигрышных сделок:     {results.get('won_trades', 0)}")
-            print(f"❌ Проигрышных сделок:    {results.get('lost_trades', 0)}")
-            print(f"🎯 Винрейт:               {results.get('win_rate', 0):.1f}%")
-            print(f"⚖️ Profit Factor:         {results.get('profit_factor', 0):.2f}")
-
-        # Дополнительные метрики
-        if 'sharpe_ratio' in results:
-            print(f"\n📊 Коэффициент Шарпа:     {results['sharpe_ratio']:.3f}")
-            print(f"📉 Макс. просадка:        {results['max_drawdown']:.2f}%")
-            print(f"🎖️ SQN:                   {results.get('sqn', 0):.2f}")
-
-        print("=" * 60)
 
     def _plot_results(self, cerebro, strategy_name: str, exchange: str, symbol: str, timeframe: str):
         """Построение графика результатов"""
@@ -907,22 +866,7 @@ class UniversalBacktester:
         except Exception as e:
             print(f"⚠️ Ошибка построения графика: {e}")
 
-    def _print_backtest_header(self, strategy_name: str, exchange: str, symbol: str,
-                              timeframe: str, start_date: str, end_date: str, params: Dict):
-        """Вывод заголовка бэктеста"""
-        print(f"\n🚀 ЗАПУСК БЭКТЕСТА: {strategy_name}")
-        print("=" * 60)
-        print(f"📈 Данные: {exchange}:{symbol} ({timeframe})")
-        if start_date or end_date:
-            print(f"📅 Период: {start_date or 'начало'} - {end_date or 'конец'}")
-        print(f"💰 Начальный капитал: ${self.initial_cash:,}")
-        print(f"💸 Комиссия: {self.commission:.3f} | Спред: {self.spread:.4f} | Проскальзывание: {self.slippage:.4f}")
 
-        if params:
-            print(f"⚙️ Параметры:")
-            for param, value in params.items():
-                print(f"   • {param}: {value}")
-        print()
 
     def _add_analyzers(self, cerebro):
         """Добавление анализаторов к Cerebro"""
