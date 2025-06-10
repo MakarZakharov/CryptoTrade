@@ -19,73 +19,43 @@ warnings.filterwarnings('ignore')
 
 
 class AdvancedSizer(bt.Sizer):
-    """Безопасный сайзер с защитой от отрицательного баланса"""
+    """Оптимизированный сайзер с защитой от отрицательного баланса"""
 
     def _getsizing(self, comminfo, cash, data, isbuy):
-        # Получаем ссылку на стратегию
         strategy = self.strategy
-
-        # ОБЯЗАТЕЛЬНАЯ проверка наличия параметра position_size
-        if not hasattr(strategy, 'params') or not hasattr(strategy.params, 'position_size'):
-            raise RuntimeError(
-                f"❌ КРИТИЧЕСКАЯ ОШИБКА: Стратегия {strategy.__class__.__name__} "
-                f"не имеет обязательного параметра 'position_size'!\n"
-                f"Добавьте в params стратегии: ('position_size', 0.50)"
-            )
-
-        position_size = strategy.params.position_size
-
-        # Валидация значения - ограничиваем максимум до 80%
-        if not isinstance(position_size, (int, float)) or position_size <= 0 or position_size > 0.8:
-            raise ValueError(
-                f"❌ ОШИБКА: position_size должен быть числом от 0 до 0.8 (максимум 80%), "
-                f"получено: {position_size} в стратегии {strategy.__class__.__name__}"
-            )
-
-        # КРИТИЧЕСКАЯ ЗАЩИТА: Минимальный резерв капитала
-        min_cash_reserve = max(self.strategy.broker.startingcash * 0.05, 1000)  # 5% или $1000
         
-        # Проверяем доступный капитал
+        # Проверка параметра position_size
+        if not hasattr(strategy, 'params') or not hasattr(strategy.params, 'position_size'):
+            raise RuntimeError(f"❌ {strategy.__class__.__name__} не имеет 'position_size'!")
+        
+        position_size = SafetyUtils.validate_position_size(strategy.params.position_size, strategy.__class__.__name__)
+        
+        # Расчет резервов и доступного капитала
+        min_cash_reserve = max(strategy.broker.startingcash * 0.05, 1000)
         if cash <= min_cash_reserve:
-            if hasattr(strategy, '_cash_warning_shown') and strategy._cash_warning_shown:
-                pass  # Не спамим предупреждениями
-            else:
-                print(f"⚠️ КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: Недостаточно средств! Cash: ${cash:.2f}, Резерв: ${min_cash_reserve:.2f}")
+            if not getattr(strategy, '_cash_warning_shown', False):
+                print(f"⚠️ Недостаточно средств! Cash: ${cash:.2f}")
                 strategy._cash_warning_shown = True
             return 0
-
-        # Доступный капитал для торговли (за вычетом резерва)
-        available_cash = cash - min_cash_reserve
         
-        # Рассчитываем предварительную комиссию
+        available_cash = cash - min_cash_reserve
         price = data.close[0]
         if price <= 0:
-            print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Некорректная цена: {price}")
             return 0
-
-        # Рассчитываем размер позиции с учетом комиссий
-        estimated_commission_rate = getattr(comminfo, 'p', {}).get('commission', 0.001) * 3  # Утроенная комиссия для безопасности
-        target_value = available_cash * position_size
-
-        # Корректируем на комиссии и спред
-        target_value_after_fees = target_value / (1 + estimated_commission_rate)
-        size = target_value_after_fees / price
-
-        # ЖЕСТКИЕ ОГРАНИЧЕНИЯ
-        max_affordable_size = available_cash / price * 0.90  # Максимум 90% от доступного капитала
-        safe_size = min(size, max_affordable_size)
-
-        # Дополнительная проверка: размер не должен превышать 50% от общего капитала
-        max_portfolio_size = self.strategy.broker.startingcash * 0.5 / price
-        final_size = min(safe_size, max_portfolio_size)
-
-        # Минимальный размер сделки
-        min_trade_size = 10 / price  # Минимум $10
-
-        if final_size < min_trade_size:
-            return 0
-
-        return max(final_size, 0)
+        
+        # Расчет размера позиции с комиссиями
+        commission_rate = getattr(comminfo, 'p', {}).get('commission', 0.001) * 3
+        target_value = available_cash * position_size / (1 + commission_rate)
+        size = target_value / price
+        
+        # Ограничения безопасности
+        max_size = min(
+            available_cash / price * 0.90,  # 90% от доступного
+            strategy.broker.startingcash * 0.5 / price  # 50% от общего
+        )
+        
+        final_size = min(size, max_size)
+        return final_size if final_size >= (10 / price) else 0  # Минимум $10
 
 
 class EnhancedCommissionInfo(bt.CommInfoBase):
@@ -97,31 +67,20 @@ class EnhancedCommissionInfo(bt.CommInfoBase):
         ('slippage', 0.0002),   # 0.02% проскальзывание
         ('margin', None),
         ('mult', 1.0),
-      ('commtype', bt.CommInfoBase.COMM_PERC),
+        ('commtype', bt.CommInfoBase.COMM_PERC),
     )
 
     def _getcommission(self, size, price, pseudoexec):
         """Расчет комиссии с учетом спреда и проскальзывания"""
-        # Проверка на валидность входных данных
         if not size or not price or price <= 0:
             return 0
         
-        # Базовая комиссия
-        commission = abs(size) * price * self.p.commission
-
-        # Добавляем спред (на каждую сделку)
-        spread_cost = abs(size) * price * self.p.spread
-
-        # Добавляем проскальзывание
-        slippage_cost = abs(size) * price * self.p.slippage
-
-        total_cost = commission + spread_cost + slippage_cost
-
-        # ЗАЩИТА: Ограничиваем максимальную комиссию до 5% от стоимости сделки
+        # Общая стоимость с комиссией, спредом и проскальзыванием
+        total_cost = abs(size) * price * (self.p.commission + self.p.spread + self.p.slippage)
+        
+        # Ограничиваем максимальную комиссию до 5% от стоимости сделки
         max_commission = abs(size) * price * 0.05
-        safe_cost = min(total_cost, max_commission)
-
-        return max(safe_cost, 0)
+        return max(min(total_cost, max_commission), 0)
 
 
 class SilentStrategyWrapper:
