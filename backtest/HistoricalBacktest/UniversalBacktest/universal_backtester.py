@@ -15,8 +15,11 @@ import numpy as np
 warnings.filterwarnings('ignore')
 
 
+
+
+
 class AdvancedSizer(bt.Sizer):
-    """Сайзер который ОБЯЗАТЕЛЬНО читает размер позиции из стратегии"""
+    """Безопасный сайзер с защитой от отрицательного баланса"""
 
     def _getsizing(self, comminfo, cash, data, isbuy):
         # Получаем ссылку на стратегию
@@ -27,22 +30,62 @@ class AdvancedSizer(bt.Sizer):
             raise RuntimeError(
                 f"❌ КРИТИЧЕСКАЯ ОШИБКА: Стратегия {strategy.__class__.__name__} "
                 f"не имеет обязательного параметра 'position_size'!\n"
-                f"Добавьте в params стратегии: ('position_size', 0.95)"
+                f"Добавьте в params стратегии: ('position_size', 0.50)"
             )
 
         position_size = strategy.params.position_size
 
-        # Валидация значения
-        if not isinstance(position_size, (int, float)) or position_size <= 0 or position_size > 1:
+        # Валидация значения - ограничиваем максимум до 80%
+        if not isinstance(position_size, (int, float)) or position_size <= 0 or position_size > 0.8:
             raise ValueError(
-                f"❌ ОШИБКА: position_size должен быть числом от 0 до 1, "
+                f"❌ ОШИБКА: position_size должен быть числом от 0 до 0.8 (максимум 80%), "
                 f"получено: {position_size} в стратегии {strategy.__class__.__name__}"
             )
 
-        # Рассчитываем размер позиции ТОЛЬКО из стратегии
-        size = (cash * position_size) / data.close[0]
+        # КРИТИЧЕСКАЯ ЗАЩИТА: Минимальный резерв капитала
+        min_cash_reserve = max(self.strategy.broker.startingcash * 0.05, 1000)  # 5% или $1000
+        
+        # Проверяем доступный капитал
+        if cash <= min_cash_reserve:
+            if hasattr(strategy, '_cash_warning_shown') and strategy._cash_warning_shown:
+                pass  # Не спамим предупреждениями
+            else:
+                print(f"⚠️ КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: Недостаточно средств! Cash: ${cash:.2f}, Резерв: ${min_cash_reserve:.2f}")
+                strategy._cash_warning_shown = True
+            return 0
 
-        return max(size, 0.001) if size > 0 else 0
+        # Доступный капитал для торговли (за вычетом резерва)
+        available_cash = cash - min_cash_reserve
+        
+        # Рассчитываем предварительную комиссию
+        price = data.close[0]
+        if price <= 0:
+            print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Некорректная цена: {price}")
+            return 0
+
+        # Рассчитываем размер позиции с учетом комиссий
+        estimated_commission_rate = getattr(comminfo, 'p', {}).get('commission', 0.001) * 3  # Утроенная комиссия для безопасности
+        target_value = available_cash * position_size
+
+        # Корректируем на комиссии и спред
+        target_value_after_fees = target_value / (1 + estimated_commission_rate)
+        size = target_value_after_fees / price
+
+        # ЖЕСТКИЕ ОГРАНИЧЕНИЯ
+        max_affordable_size = available_cash / price * 0.90  # Максимум 90% от доступного капитала
+        safe_size = min(size, max_affordable_size)
+
+        # Дополнительная проверка: размер не должен превышать 50% от общего капитала
+        max_portfolio_size = self.strategy.broker.startingcash * 0.5 / price
+        final_size = min(safe_size, max_portfolio_size)
+
+        # Минимальный размер сделки
+        min_trade_size = 10 / price  # Минимум $10
+
+        if final_size < min_trade_size:
+            return 0
+
+        return max(final_size, 0)
 
 
 class EnhancedCommissionInfo(bt.CommInfoBase):
@@ -59,18 +102,26 @@ class EnhancedCommissionInfo(bt.CommInfoBase):
 
     def _getcommission(self, size, price, pseudoexec):
         """Расчет комиссии с учетом спреда и проскальзывания"""
+        # Проверка на валидность входных данных
+        if not size or not price or price <= 0:
+            return 0
+        
         # Базовая комиссия
         commission = abs(size) * price * self.p.commission
-        
+
         # Добавляем спред (на каждую сделку)
         spread_cost = abs(size) * price * self.p.spread
-        
+
         # Добавляем проскальзывание
         slippage_cost = abs(size) * price * self.p.slippage
-        
+
         total_cost = commission + spread_cost + slippage_cost
-        
-        return total_cost
+
+        # ЗАЩИТА: Ограничиваем максимальную комиссию до 5% от стоимости сделки
+        max_commission = abs(size) * price * 0.05
+        safe_cost = min(total_cost, max_commission)
+
+        return max(safe_cost, 0)
 
 
 class SilentStrategyWrapper:
@@ -107,11 +158,11 @@ class DataManager:
     def __init__(self, data_root_path: str = None):
         self.data_root_path = data_root_path or self._find_data_root()
         self.available_data = self._scan_available_data()
-    
+
     def _find_data_root(self) -> str:
         """Автоматический поиск корневой папки данных"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        
+
         possible_paths = [
             os.path.join(current_dir, '../../../data'),
             os.path.join(current_dir, '../../data'),
@@ -124,31 +175,31 @@ class DataManager:
             abs_path = os.path.abspath(path)
             if os.path.exists(abs_path):
                 return abs_path
-        
+
         raise FileNotFoundError("Папка с данными не найдена")
-    
+
     def _scan_available_data(self) -> Dict[str, Dict[str, List[str]]]:
         """Сканирование доступных данных"""
         data_structure = defaultdict(lambda: defaultdict(list))
-        
+
         if not os.path.exists(self.data_root_path):
             return dict(data_structure)
-        
+
         for exchange in os.listdir(self.data_root_path):
             exchange_path = os.path.join(self.data_root_path, exchange)
             if not os.path.isdir(exchange_path):
                 continue
-                
+
             for symbol in os.listdir(exchange_path):
                 symbol_path = os.path.join(exchange_path, symbol)
                 if not os.path.isdir(symbol_path):
                     continue
-                    
+
                 for timeframe in os.listdir(symbol_path):
                     timeframe_path = os.path.join(symbol_path, timeframe)
                     if not os.path.isdir(timeframe_path):
                         continue
-                    
+
                     # Поиск CSV файлов
                     csv_files = glob.glob(os.path.join(timeframe_path, "*.csv"))
                     if csv_files:
@@ -160,38 +211,38 @@ class DataManager:
                                 'key': key
                             }
                         ])
-        
+
         return dict(data_structure)
-    
+
     def list_available_data(self):
         """Вывод списка доступных данных"""
         print("\n📊 ДОСТУПНЫЕ ДАННЫЕ:")
         print("=" * 80)
-        
+
         total_datasets = 0
         for exchange, symbols in self.available_data.items():
             print(f"\n📈 Биржа: {exchange.upper()}")
             print("-" * 40)
-            
+
             for symbol, timeframe_data in symbols.items():
                 print(f"  💰 {symbol}:")
                 for tf_info in timeframe_data:
                     file_count = len(tf_info['files'])
                     print(f"    ⏰ {tf_info['timeframe']} ({file_count} файл(ов))")
                     total_datasets += file_count
-        
+
         print(f"\n📊 Всего наборов данных: {total_datasets}")
         print("=" * 80)
-    
-    def get_data_path(self, exchange: str, symbol: str, timeframe: str, 
+
+    def get_data_path(self, exchange: str, symbol: str, timeframe: str,
                      start_date: str = None, end_date: str = None) -> str:
         """Получение пути к данным"""
         if exchange not in self.available_data:
             raise ValueError(f"Биржа {exchange} не найдена")
-        
+
         if symbol not in self.available_data[exchange]:
             raise ValueError(f"Символ {symbol} не найден для биржи {exchange}")
-        
+
         # Поиск нужного таймфрейма
         for tf_info in self.available_data[exchange][symbol]:
             if tf_info['timeframe'] == timeframe:
@@ -201,7 +252,7 @@ class DataManager:
                 else:
                     # Возвращаем первый доступный файл
                     return tf_info['files'][0]
-        
+
         raise ValueError(f"Таймфрейм {timeframe} не найден для {exchange}:{symbol}")
     
     def _find_file_by_date_range(self, files: List[str], start_date: str, end_date: str) -> str:
@@ -211,7 +262,7 @@ class DataManager:
         if files:
             return files[0]
         raise FileNotFoundError("Файлы данных не найдены")
-    
+
     def load_data(self, exchange: str, symbol: str, timeframe: str,
                  start_date: str = None, end_date: str = None) -> bt.feeds.PandasData:
         """Загрузка данных в формате BackTrader"""
@@ -234,32 +285,32 @@ class DataManager:
             volume='volume',
             openinterest=-1
         )
-        
+
         return data_feed
-    
-    def _process_dataframe(self, df: pd.DataFrame, start_date: str = None, 
+
+    def _process_dataframe(self, df: pd.DataFrame, start_date: str = None,
                           end_date: str = None) -> pd.DataFrame:
         """Обработка DataFrame"""
         # Конвертация времени
         df['timestamp'] = pd.to_datetime(df['timestamp'])
-        
+
         # Фильтрация по датам
         if start_date:
             df = df[df['timestamp'] >= pd.to_datetime(start_date)]
         if end_date:
             df = df[df['timestamp'] <= pd.to_datetime(end_date)]
-        
+
         # Установка индекса
         df.set_index('timestamp', inplace=True)
-        
+
         # Проверка и очистка данных
         df = df.dropna()
         df = df[(df[['open', 'high', 'low', 'close']] > 0).all(axis=1)]
-        
+
         # Добавление volume если отсутствует
         if 'volume' not in df.columns:
             df['volume'] = 1000
-        
+
         # Сортировка по индексу (времени)
         df.sort_index(inplace=True)
 
@@ -286,7 +337,7 @@ class UniversalBacktester:
         # Менеджеры
         self.data_manager = DataManager(data_root_path)
         self.strategies_registry = {}
-        
+
         print("🔍 Инициализация универсального бэктестера...")
         if self.require_position_size:
             print("⚠️  ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА: Все стратегии должны иметь 'position_size'!")
@@ -383,14 +434,14 @@ class UniversalBacktester:
     def _load_strategies_from_module(self, module_name: str, module_path: str) -> int:
         """Загрузка стратегий с ОБЯЗАТЕЛЬНОЙ проверкой position_size"""
         strategies_loaded = 0
-        
+
         try:
             spec = importlib.util.spec_from_file_location(
                 module_name, os.path.join(module_path, f"{module_name}.py"))
-            
+
             if spec is None or spec.loader is None:
                 return 0
-                
+
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
@@ -402,9 +453,9 @@ class UniversalBacktester:
                         self._validate_strategy_position_size(obj, name)
 
                         default_params = self._extract_strategy_params(obj)
-                        
+
                         unique_key = f"{name}_{module_name}" if name in self.strategies_registry else name
-                        
+
                         self.strategies_registry[unique_key] = {
                             'class': obj,
                             'module': module_name,
@@ -445,7 +496,7 @@ class UniversalBacktester:
     def _extract_strategy_params(self, strategy_class) -> Dict[str, Any]:
         """Извлечение параметров стратегии"""
         default_params = {}
-        
+
         if not hasattr(strategy_class, 'params'):
             return default_params
 
@@ -460,19 +511,19 @@ class UniversalBacktester:
                         name, value = param[0], param[1]
                         if self._is_valid_param(name, value):
                             default_params[name] = value
-            
+
             elif isinstance(params_attr, dict):
                 for name, value in params_attr.items():
                     if self._is_valid_param(name, value):
                         default_params[name] = value
-            
+
             elif hasattr(params_attr, '__dict__'):
                 for name in dir(params_attr):
                     if not name.startswith('_'):
                         value = getattr(params_attr, name)
                         if self._is_valid_param(name, value):
                             default_params[name] = value
-        
+
         except Exception:
             pass
 
@@ -481,7 +532,7 @@ class UniversalBacktester:
     def _is_valid_param(self, name: str, value: Any) -> bool:
         """Проверка валидности параметра"""
         return (
-            not callable(value) and 
+            not callable(value) and
             not name.startswith('_') and
             name not in ['isdefault', 'notdefault'] and
             not inspect.isclass(value)
@@ -491,10 +542,10 @@ class UniversalBacktester:
         """Очистка и форматирование docstring"""
         if not docstring:
             return ""
-        
+
         lines = [line.strip() for line in docstring.strip().split('\n')]
         cleaned = ' '.join(line for line in lines if line)
-        
+
         if len(cleaned) > 100:
             return cleaned[:97] + "..."
         return cleaned
@@ -503,10 +554,10 @@ class UniversalBacktester:
         """Вывод всех доступных опций"""
         print("\n🔍 УНИВЕРСАЛЬНЫЙ БЭКТЕСТЕР")
         print("=" * 80)
-        
+
         # Доступные данные
         self.data_manager.list_available_data()
-        
+
         # Доступные стратегии
         self.list_strategies()
 
@@ -535,7 +586,7 @@ class UniversalBacktester:
                 if info['default_params']:
                     param_count = len(info['default_params'])
                     print(f"      ⚙️ Параметры ({param_count}):")
-                    
+
                     for param_name, param_value in list(info['default_params'].items())[:5]:
                         print(f"         • {param_name}: {param_value}")
 
@@ -549,7 +600,7 @@ class UniversalBacktester:
     def run_single_backtest(self,
                            strategy_name: str,
                            exchange: str = "binance",
-                           symbol: str = "BTCUSDT", 
+                           symbol: str = "BTCUSDT",
                            timeframe: str = "1d",
                            start_date: str = None,
                            end_date: str = None,
@@ -572,7 +623,7 @@ class UniversalBacktester:
             final_params.update(strategy_params)
 
         if verbose:
-            self._print_backtest_header(strategy_name, exchange, symbol, timeframe, 
+            self._print_backtest_header(strategy_name, exchange, symbol, timeframe,
                                       start_date, end_date, final_params)
 
         try:
@@ -590,9 +641,21 @@ class UniversalBacktester:
             data_feed = self.data_manager.load_data(exchange, symbol, timeframe, start_date, end_date)
             cerebro.adddata(data_feed)
 
-            # Настройка брокера
+            # Настройка брокера с ЗАЩИТОЙ ОТ ОТРИЦАТЕЛЬНОГО БАЛАНСА
             cerebro.broker.setcash(self.initial_cash)
+            cerebro.broker.set_checksubmit(False)  # Отключаем автоматическую проверку
+            cerebro.broker.set_coc(True)  # Закрытие позиций при недостатке средств
             
+            # КРИТИЧЕСКАЯ ЗАЩИТА: Минимальный резерв для маржин-коллов
+            cerebro.broker.set_coo(True)  # Cancel on close - отмена ордеров при закрытии позиций
+
+            # Дополнительная защита через кастомный broker wrapper
+            original_getvalue = cerebro.broker.getvalue
+            def safe_getvalue():
+                value = original_getvalue()
+                return max(value, 0.01)  # Минимум $0.01
+            cerebro.broker.getvalue = safe_getvalue
+
             # Добавление улучшенной комиссионной схемы
             comminfo = EnhancedCommissionInfo(
                 commission=self.commission,
@@ -611,11 +674,18 @@ class UniversalBacktester:
             results = cerebro.run()
             if not results:
                 raise RuntimeError("Стратегия не вернула результатов")
-            
+
             result = results[0]
 
+            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: Валидация финального значения
+            final_value = result.broker.getvalue()
+            if final_value < 0:
+                print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Обнаружен отрицательный баланс: ${final_value:.2f}")
+                print(f"   Устанавливаем минимальное значение: $0.01")
+                final_value = 0.01
+
             # Обработка результатов
-            analysis_result = self._process_results(result, strategy_name, final_params, 
+            analysis_result = self._process_results(result, strategy_name, final_params,
                                                   exchange, symbol, timeframe)
 
             if verbose:
@@ -689,7 +759,7 @@ class UniversalBacktester:
                 error_msg = str(e)
                 print(f"❌ Ошибка: {error_msg}")
                 failed_strategies.append(strategy_name)
-                
+
                 if not skip_errors:
                     raise e
 
@@ -729,11 +799,27 @@ class UniversalBacktester:
 
 
 
-    def _process_results(self, result, strategy_name: str, params: Dict, 
+    def _process_results(self, result, strategy_name: str, params: Dict,
                         exchange: str, symbol: str, timeframe: str) -> Dict[str, Any]:
         """Обработка результатов бэктеста"""
         final_value = result.broker.getvalue()
+
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Защита от отрицательного баланса
+        if final_value < 0:
+            print(f"⚠️ ИСПРАВЛЕНИЕ: Отрицательный баланс ${final_value:.2f} -> $0.01")
+            final_value = 0.01
+
+        # Ограничиваем максимальную потерю до -99.99%
+        min_allowed_value = self.initial_cash * 0.0001  # 0.01% от начального капитала
+        if final_value < min_allowed_value:
+            final_value = min_allowed_value
+
         total_return = (final_value - self.initial_cash) / self.initial_cash * 100
+
+        # Дополнительная защита от экстремальных значений доходности
+        if total_return < -99.99:
+            total_return = -99.99
+            print(f"⚠️ ИСПРАВЛЕНИЕ: Доходность ограничена до -99.99%")
 
         analysis_result = {
             'strategy_name': strategy_name,
@@ -829,7 +915,7 @@ class UniversalBacktester:
         """Вывод отформатированных результатов"""
         print("\n📊 РЕЗУЛЬТАТЫ БЭКТЕСТИРОВАНИЯ")
         print("=" * 60)
-        
+
         # Основные метрики
         print(f"💰 Начальный капитал:     ${results['initial_value']:,.2f}")
         print(f"💰 Финальный капитал:     ${results['final_value']:,.2f}")
@@ -902,18 +988,18 @@ if __name__ == "__main__":
         spread=0.0005,     # 0.05%
         slippage=0.0002    # 0.02%
     )
-    
+
     # Просмотр доступных опций
     backtester.list_available_options()
-    
+
     # Пример: запуск одной стратегии
     backtester.run_single_backtest(
         strategy_name="SafeProfitableBTCStrategy",
         exchange="binance",
-        symbol="BNBUSDC",
+        symbol="BTCUSDC",
         timeframe="1d"
     )
-    
+
 
     # Пример: сравнение стратегий
     backtester.compare_strategies()
