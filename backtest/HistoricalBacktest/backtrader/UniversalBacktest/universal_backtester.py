@@ -473,15 +473,15 @@ class UniversalBacktester:
         self._discover_strategies()
 
     def _discover_strategies(self):
-        """Автоматическое обнаружение стратегий"""
+        """Автоматическое обнаружение стратегий во всей папке backtrader"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
 
         possible_paths = [
-            os.path.join(current_dir, '../../../strategies/TestStrategies/'),
-            os.path.join(current_dir, '../../strategies/TestStrategies/'),
-            os.path.join(current_dir, '../strategies/TestStrategies/'),
-            os.path.join(current_dir, 'strategies/TestStrategies/'),
-            os.path.join(current_dir.split('CryptoTrade')[0], 'CryptoTrade', 'strategies', 'TestStrategies'),
+            os.path.join(current_dir, '../../../strategies/backtrader/'),
+            os.path.join(current_dir, '../../strategies/backtrader/'),
+            os.path.join(current_dir, '../strategies/backtrader/'),
+            os.path.join(current_dir, 'strategies/backtrader/'),
+            os.path.join(current_dir.split('CryptoTrade')[0], 'CryptoTrade', 'strategies', 'backtrader'),
         ]
 
         strategies_path = None
@@ -501,29 +501,37 @@ class UniversalBacktester:
             sys.path.insert(0, strategies_path)
 
         strategies_found = 0
-        for filename in os.listdir(strategies_path):
-            if filename.endswith('.py') and not filename.startswith('__'):
-                module_name = filename[:-3]
-                found_count = self._load_strategies_from_module(module_name, strategies_path)
-                strategies_found += found_count
+        
+        # Рекурсивный поиск по всем подпапкам
+        for root, dirs, files in os.walk(strategies_path):
+            for filename in files:
+                if filename.endswith('.py') and not filename.startswith('__'):
+                    module_name = filename[:-3]
+                    file_path = os.path.join(root, filename)
+                    
+                    # Создаем уникальное имя модуля на основе пути
+                    rel_path = os.path.relpath(file_path, strategies_path)
+                    module_key = rel_path.replace(os.sep, '.').replace('.py', '')
+                    
+                    found_count = self._load_strategies_from_file(module_name, file_path, module_key)
+                    strategies_found += found_count
 
         print(f"✅ Загружено стратегий: {strategies_found}")
 
 
 
-    def _load_strategies_from_module(self, module_name: str, module_path: str) -> int:
-        """Загрузка стратегий с ОБЯЗАТЕЛЬНОЙ проверкой position_size"""
+    def _load_strategies_from_file(self, module_name: str, file_path: str, module_key: str) -> int:
+        """Загрузка стратегий из конкретного файла"""
         strategies_loaded = 0
 
         try:
-            spec = importlib.util.spec_from_file_location(
-                module_name, os.path.join(module_path, f"{module_name}.py"))
+            spec = importlib.util.spec_from_file_location(module_key, file_path)
 
             if spec is None or spec.loader is None:
                 return 0
 
             module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
+            sys.modules[module_key] = module
             spec.loader.exec_module(module)
 
             for name, obj in inspect.getmembers(module):
@@ -534,12 +542,14 @@ class UniversalBacktester:
 
                         default_params = self._extract_strategy_params(obj)
 
-                        unique_key = f"{name}_{module_name}" if name in self.strategies_registry else name
+                        # Создаем уникальный ключ с путем к файлу
+                        folder_name = os.path.basename(os.path.dirname(file_path))
+                        unique_key = f"{name}_{folder_name}" if name in self.strategies_registry else name
 
                         self.strategies_registry[unique_key] = {
                             'class': obj,
-                            'module': module_name,
-                            'file': f"{module_name}.py",
+                            'module': module_key,
+                            'file': os.path.relpath(file_path, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(file_path))))),
                             'default_params': default_params,
                             'description': self._clean_docstring(obj.__doc__) or f"Стратегия {name}",
                             'original_name': name
@@ -548,18 +558,18 @@ class UniversalBacktester:
 
                         # Показываем размер позиции
                         size_value = default_params.get('position_size', 'НЕТ')
-                        print(f"✅ {name} (position_size: {size_value})")
+                        print(f"✅ {name} (position_size: {size_value}) - {os.path.basename(file_path)}")
 
                     except ValueError as e:
                         # Ошибка валидации - НЕ загружаем стратегию
-                        print(f"❌ {name}: ПРОПУЩЕНА")
+                        print(f"❌ {name}: ПРОПУЩЕНА - {os.path.basename(file_path)}")
                         print(f"   {str(e)}")
                         print()
                     except Exception as e:
                         print(f"⚠️ Ошибка загрузки {name}: {e}")
 
         except Exception as e:
-            print(f"❌ Ошибка модуля {module_name}: {e}")
+            print(f"❌ Ошибка модуля {os.path.basename(file_path)}: {e}")
 
         return strategies_loaded
 
