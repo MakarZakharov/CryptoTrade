@@ -951,9 +951,9 @@ if __name__ == "__main__":
 
     # Пример: запуск одной стратегии
     backtester.run_single_backtest(
-        strategy_name="SafeProfitableBTCStrategy",
+        strategy_name="RSIStrategy",
         exchange="binance",
-        symbol="BTCUSDC",
+        symbol="BTCUSDT",
         timeframe="1d"
     )
 
