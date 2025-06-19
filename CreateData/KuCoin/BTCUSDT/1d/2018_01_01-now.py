@@ -62,4 +62,3 @@ def save_kucoin():
 
 if __name__ == "__main__":
     save_kucoin()
-# dssd
