@@ -163,8 +163,8 @@ class BollingerBandsMeanReversionStrategy:
         """
         upper_band, middle_band, lower_band = self.calculate_bollinger_bands(data['close'])
         
-        # Покупка при касании нижней полосы (ожидание отскока вверх)
-        entries = data['close'] <= lower_band
+        # Покупка при пересечении нижней полосы (ожидание отскока вверх)
+        entries = (data['close'] <= lower_band) & (data['close'].shift(1) > lower_band)
         
         if self.exit_at_middle:
             # Выход при возврате к средней линии

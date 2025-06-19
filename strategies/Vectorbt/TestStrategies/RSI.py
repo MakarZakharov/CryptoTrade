@@ -55,11 +55,11 @@ class RSIVectorbtStrategy:
         rsi = self.calculate_rsi(data['close'])
         
         # Генерация сигналов
-        # Покупка когда RSI пересекает oversold снизу вверх
-        entries = (rsi < self.oversold) & (rsi.shift(1) >= self.oversold)
+        # Покупка когда RSI выходит из зоны перепроданности (пересекает oversold снизу вверх)
+        entries = (rsi > self.oversold) & (rsi.shift(1) <= self.oversold)
         
-        # Продажа когда RSI пересекает overbought сверху вниз  
-        exits = (rsi > self.overbought) & (rsi.shift(1) <= self.overbought)
+        # Продажа когда RSI выходит из зоны перекупленности (пересекает overbought сверху вниз)  
+        exits = (rsi < self.overbought) & (rsi.shift(1) >= self.overbought)
         
         return entries, exits
     
