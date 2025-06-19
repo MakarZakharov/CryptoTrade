@@ -183,6 +183,7 @@ class RSI_SMA_Strategy(bt.Strategy):
             return
 
         pnl = trade.pnl
+        
         # Fix for ZeroDivisionError: check if trade.value is zero
         if abs(trade.value) > 0:
             pnl_pct = (trade.pnl / abs(trade.value)) * 100

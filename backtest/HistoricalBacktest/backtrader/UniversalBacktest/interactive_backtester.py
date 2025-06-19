@@ -1,460 +1,455 @@
+#!/usr/bin/env python3
+"""
+Интерактивный бэктестер для тестирования стратегий на всех доступных парах
+"""
+
 import os
 import sys
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import pandas as pd
-import numpy as np
-from datetime import datetime
-import warnings
-from typing import List
+from typing import Dict, List, Tuple, Any
+from collections import defaultdict
+import time
+
+# Добавляем путь к универсальному бэктестеру
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
 from universal_backtester import UniversalBacktester
 
-warnings.filterwarnings('ignore')
 
-
-class InteractiveBacktester(UniversalBacktester):
+class InteractiveMultiPairBacktester:
     """
-    Интерактивный бэктестер с расширенной визуализацией и выбором стратегий
+    Интерактивный бэктестер для тестирования одной стратегии на всех доступных парах
     """
     
-    def __init__(self, initial_cash: float = 100000, commission: float = 0.001):
-        super().__init__(initial_cash, commission)
-        self.portfolio_values = []
-        self.dates = []
-        self.trades_history = []
-
-    def get_available_timeframes(self) -> List[str]:
-        """Получить список доступных таймфреймов на основе существующих файлов"""
-        data_base_path = os.path.join(os.path.dirname(__file__), '../../data/binance/BTCUSDT/')
-        available_timeframes = []
-
-        if os.path.exists(data_base_path):
-            for item in os.listdir(data_base_path):
-                timeframe_path = os.path.join(data_base_path, item)
-                if os.path.isdir(timeframe_path):
-                    # Проверяем, есть ли любые CSV файлы в папке
-                    csv_files = [f for f in os.listdir(timeframe_path) if f.endswith('.csv')]
-                    if csv_files:
-                        available_timeframes.append(item)
-
-        return sorted(available_timeframes) if available_timeframes else ["1d"]
-
-    def select_timeframe_interactive(self) -> str:
-        """Интерактивный выбор таймфрейма"""
-        available_timeframes = self.get_available_timeframes()
-
-        print("📊 ВЫБОР ТАЙМФРЕЙМА")
-        print("-" * 30)
-        print("Доступные таймфреймы:")
-
-        for i, tf in enumerate(available_timeframes, 1):
-            print(f"{i}. {tf}")
-
+    def __init__(self, 
+                 initial_cash: float = 100000,
+                 commission: float = 0.001,
+                 spread: float = 0.0005,
+                 slippage: float = 0.0002):
+        
+        self.backtester = UniversalBacktester(
+            initial_cash=initial_cash,
+            commission=commission,
+            spread=spread,
+            slippage=slippage,
+            require_position_size=True
+        )
+        
+        self.results_cache = {}
+        
+    def get_all_data_pairs(self) -> List[Tuple[str, str, str]]:
+        """
+        Получение всех доступных пар данных (exchange, symbol, timeframe)
+        
+        Returns:
+            List[Tuple[str, str, str]]: Список кортежей (exchange, symbol, timeframe)
+        """
+        all_pairs = []
+        
+        for exchange, symbols_data in self.backtester.data_manager.available_data.items():
+            for symbol, timeframe_data in symbols_data.items():
+                for tf_info in timeframe_data:
+                    timeframe = tf_info['timeframe']
+                    all_pairs.append((exchange, symbol, timeframe))
+        
+        return sorted(all_pairs)
+    
+    def display_strategy_menu(self) -> str:
+        """
+        Отображение меню выбора стратегии
+        
+        Returns:
+            str: Выбранная стратегия
+        """
+        strategies = list(self.backtester.strategies_registry.keys())
+        
+        print("\n" + "="*80)
+        print("🎯 ВЫБОР СТРАТЕГИИ ДЛЯ МУЛЬТИ-ТЕСТИРОВАНИЯ")
+        print("="*80)
+        
+        # Группируем стратегии по файлам для удобства
+        strategies_by_file = defaultdict(list)
+        for strategy_name in strategies:
+            file_path = self.backtester.strategies_registry[strategy_name]['file']
+            strategies_by_file[file_path].append(strategy_name)
+        
+        strategy_index = 1
+        index_to_strategy = {}
+        
+        for file_path, file_strategies in strategies_by_file.items():
+            print(f"\n📄 {os.path.basename(file_path)}:")
+            for strategy_name in file_strategies:
+                strategy_info = self.backtester.strategies_registry[strategy_name]
+                position_size = strategy_info['default_params'].get('position_size', 'НЕТ')
+                print(f"   {strategy_index:2d}. {strategy_name} (position_size: {position_size})")
+                index_to_strategy[strategy_index] = strategy_name
+                strategy_index += 1
+        
+        print("\n" + "="*80)
+        
         while True:
             try:
-                choice = input(f"Выберите таймфрейм (1-{len(available_timeframes)}) или Enter для {available_timeframes[0]}: ").strip()
-
-                if not choice:
-                    return available_timeframes[0]
-
+                choice = input(f"Выберите стратегию (1-{len(strategies)}): ").strip()
                 choice_num = int(choice)
-                if 1 <= choice_num <= len(available_timeframes):
-                    selected_tf = available_timeframes[choice_num - 1]
-                    print(f"✅ Выбран таймфрейм: {selected_tf}")
-                    return selected_tf
-                else:
-                    print(f"❌ Введите число от 1 до {len(available_timeframes)}")
-
-            except ValueError:
-                print("❌ Введите корректный номер")
-
-    def select_strategy_interactive(self):
-        """Интерактивный выбор стратегии"""
-        print("\n🎯 ВЫБОР СТРАТЕГИИ ДЛЯ ТЕСТИРОВАНИЯ")
-        print("=" * 60)
-        
-        if not self.strategies_registry:
-            print("❌ Стратегии не найдены!")
-            return None
-            
-        strategies_list = list(self.strategies_registry.keys())
-        
-        for i, strategy_name in enumerate(strategies_list, 1):
-            strategy_info = self.strategies_registry[strategy_name]
-            print(f"{i:2d}. 🎯 {strategy_name}")
-            print(f"     📝 {strategy_info['description'][:60]}...")
-            print(f"     📄 Файл: {strategy_info['file']}")
-            print(f"     ⚙️  Параметров: {len(strategy_info['default_params'])}")
-            print()
-        
-        while True:
-            try:
-                choice = input(f"Выберите стратегию (1-{len(strategies_list)}) или 'q' для выхода: ").strip()
                 
-                if choice.lower() == 'q':
-                    return None
-                    
-                choice_num = int(choice)
-                if 1 <= choice_num <= len(strategies_list):
-                    selected_strategy = strategies_list[choice_num - 1]
+                if choice_num in index_to_strategy:
+                    selected_strategy = index_to_strategy[choice_num]
                     print(f"\n✅ Выбрана стратегия: {selected_strategy}")
                     return selected_strategy
                 else:
-                    print(f"❌ Введите число от 1 до {len(strategies_list)}")
-                    
+                    print(f"❌ Введите число от 1 до {len(strategies)}")
             except ValueError:
-                print("❌ Введите корректный номер стратегии")
-                
-    def run_enhanced_backtest(self, strategy_name: str, strategy_params: dict = None,
-                            data_path: str = None, timeframe: str = "1d") -> dict:
-        """Расширенный бэктест с сбором данных для графиков"""
+                print("❌ Введите корректное число")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы")
+                sys.exit(0)
+    
+    def display_timeframe_menu(self, all_pairs: List[Tuple[str, str, str]]) -> str:
+        """
+        Отображение меню выбора таймфрейма
         
-        print(f"\n🚀 ЗАПУСК РАСШИРЕННОГО БЭКТЕСТА: {strategy_name}")
-        print("=" * 70)
-        
-        # Очищаем предыдущие данные
-        self.portfolio_values = []
-        self.dates = []
-        self.trades_history = []
-        
-        # Автоматически находим подходящий файл данных для таймфрейма
-        if data_path is None:
-            data_path = self._find_data_file(timeframe)
-
-        # Запускаем обычный бэктест
-        result = self.run_backtest(
-            strategy_name=strategy_name,
-            strategy_params=strategy_params,
-            data_path=data_path,
-            timeframe=timeframe,
-            show_plot=False,
-            verbose=True
-        )
-        
-        # Получаем данные для графиков
-        self._collect_backtest_data(strategy_name, strategy_params, data_path, timeframe)
-        
-        return result
-        
-    def _collect_backtest_data(self, strategy_name: str, strategy_params: dict,
-                             data_path: str, timeframe: str):
-        """Сбор данных для построения графиков"""
-        import backtrader as bt
-        
-        # Создаем новый cerebro для сбора данных
-        cerebro = bt.Cerebro()
-        
-        # Создаем стратегию с трекингом
-        strategy_info = self.strategies_registry[strategy_name]
-        strategy_class = strategy_info['class']
-        final_params = strategy_info['default_params'].copy()
-        if strategy_params:
-            final_params.update(strategy_params)
+        Args:
+            all_pairs: Список всех доступных пар
             
-        # Создаем обертку стратегии для сбора данных
-        class TrackingStrategy(strategy_class):
-            def __init__(self):
-                super().__init__()
-                self.parent_backtester = None
-                
-            def next(self):
-                super().next()
-                # Сохраняем данные портфеля
-                if self.parent_backtester:
-                    self.parent_backtester.portfolio_values.append(self.broker.getvalue())
-                    self.parent_backtester.dates.append(self.data.datetime.date(0))
-                    
-            def notify_trade(self, trade):
-                super().notify_trade(trade) if hasattr(super(), 'notify_trade') else None
-                if trade.isclosed and self.parent_backtester:
-                    self.parent_backtester.trades_history.append({
-                        'date': self.data.datetime.date(0),
-                        'pnl': trade.pnl,
-                        'size': trade.size,
-                        'price': trade.price,
-                        'commission': trade.commission
-                    })
+        Returns:
+            str: Выбранный таймфрейм
+        """
+        # Получаем уникальные таймфреймы
+        timeframes = sorted(list(set(pair[2] for pair in all_pairs)))
         
-        cerebro.addstrategy(TrackingStrategy, **final_params)
+        print(f"\n📊 ДОСТУПНЫЕ ТАЙМФРЕЙМЫ:")
+        print("-" * 40)
+        for i, tf in enumerate(timeframes, 1):
+            # Подсчитываем количество пар для каждого таймфрейма
+            pair_count = len([p for p in all_pairs if p[2] == tf])
+            print(f"   {i}. {tf} ({pair_count} пар)")
         
-        # Настраиваем стратегию
-        data_feed = self.load_data(data_path, timeframe)
-        cerebro.adddata(data_feed)
-        cerebro.broker.setcash(self.initial_cash)
-        cerebro.broker.setcommission(commission=self.commission)
-        
-        # Запускаем и передаем ссылку на себя
-        results = cerebro.run()
-        if results:
-            results[0].parent_backtester = self
-            
-    def _find_data_file(self, timeframe: str) -> str:
-        """Найти подходящий файл данных для таймфрейма"""
-        timeframe_path = os.path.join(os.path.dirname(__file__), f'../../data/binance/BTCUSDT/{timeframe}/')
-
-        if os.path.exists(timeframe_path):
-            csv_files = [f for f in os.listdir(timeframe_path) if f.endswith('.csv')]
-            if csv_files:
-                # Берем первый найденный CSV файл
-                return f"../../data/binance/BTCUSDT/{timeframe}/{csv_files[0]}"
-
-        # Если не найден, используем дефолтный путь
-        return f"../../data/binance/BTCUSDT/{timeframe}/2018_01_01-2025_01_01.csv"
-
-    def plot_enhanced_results(self, strategy_name: str, data_path: str = None, timeframe: str = "1d"):
-        """Построение расширенных графиков результатов"""
-        
-        # Автоматически находим подходящий файл данных для таймфрейма
-        if data_path is None:
-            data_path = self._find_data_file(timeframe)
-
-        # Загружаем исходные данные
-        data_df = self._load_price_data(data_path, timeframe)
-        
-        # Создаем фигуру с подграфиками
-        fig = plt.figure(figsize=(16, 12))
-        
-        # График 1: Цена актива
-        ax1 = plt.subplot(3, 1, 1)
-        self._plot_price_chart(ax1, data_df, strategy_name)
-        
-        # График 2: Кривая баланса
-        ax2 = plt.subplot(3, 1, 2)
-        self._plot_portfolio_curve(ax2)
-        
-        # График 3: Распределение доходности сделок
-        ax3 = plt.subplot(3, 1, 3)
-        self._plot_trades_distribution(ax3)
-        
-        plt.tight_layout()
-        plt.show()
-        
-    def _load_price_data(self, data_path: str, timeframe: str) -> pd.DataFrame:
-        """Загрузка данных цен для графика"""
-        if data_path is None:
-            data_path = f"../../data/binance/BTCUSDT/{timeframe}/2018_01_01-2025_01_01.csv"
-            
-        full_path = os.path.join(os.path.dirname(__file__), data_path) if not os.path.isabs(data_path) else data_path
-        df = pd.read_csv(full_path)
-        
-        # Автоматическое определение колонок
-        column_mapping = {}
-        for col in df.columns:
-            col_lower = col.lower().strip()
-            if any(x in col_lower for x in ['timestamp', 'date', 'time']):
-                column_mapping[col] = 'datetime'
-            elif col_lower in ['o', 'open']: column_mapping[col] = 'open'
-            elif col_lower in ['h', 'high']: column_mapping[col] = 'high'
-            elif col_lower in ['l', 'low']: column_mapping[col] = 'low'
-            elif col_lower in ['c', 'close']: column_mapping[col] = 'close'
-            elif col_lower in ['v', 'volume', 'vol']: column_mapping[col] = 'volume'
-        
-        df = df.rename(columns=column_mapping)
-        
-        if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'])
-            df.set_index('datetime', inplace=True)
-        elif 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df.set_index('timestamp', inplace=True)
-            
-        return df
-        
-    def _plot_price_chart(self, ax, data_df, strategy_name):
-        """График цены актива"""
-        ax.plot(data_df.index, data_df['close'], linewidth=1, color='blue', alpha=0.7)
-        ax.set_title(f'📈 Цена актива - {strategy_name}', fontsize=14, fontweight='bold')
-        ax.set_ylabel('Цена', fontsize=12)
-        ax.grid(True, alpha=0.3)
-        
-        # Форматирование дат
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-        
-        # Статистика цены
-        price_change = ((data_df['close'].iloc[-1] - data_df['close'].iloc[0]) / data_df['close'].iloc[0]) * 100
-        ax.text(0.02, 0.98, f'Изменение цены: {price_change:+.1f}%', 
-                transform=ax.transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-                
-    def _plot_portfolio_curve(self, ax):
-        """График кривой баланса портфеля"""
-        if not self.portfolio_values or not self.dates:
-            ax.text(0.5, 0.5, 'Нет данных портфеля', transform=ax.transAxes, 
-                   ha='center', va='center', fontsize=12)
-            return
-            
-        dates = pd.to_datetime(self.dates)
-        values = np.array(self.portfolio_values)
-        
-        # Основная кривая
-        ax.plot(dates, values, linewidth=2, color='green', label='Портфель')
-        
-        # Базовая линия (начальный капитал)
-        ax.axhline(y=self.initial_cash, color='red', linestyle='--', alpha=0.7, label='Начальный капитал')
-        
-        # Заливка области прибыли/убытка
-        ax.fill_between(dates, values, self.initial_cash, 
-                       where=(values >= self.initial_cash), alpha=0.3, color='green', label='Прибыль')
-        ax.fill_between(dates, values, self.initial_cash,
-                       where=(values < self.initial_cash), alpha=0.3, color='red', label='Убыток')
-        
-        ax.set_title('💰 Кривая баланса портфеля', fontsize=14, fontweight='bold')
-        ax.set_ylabel('Стоимость портфеля', fontsize=12)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Форматирование дат
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-        
-        # Статистика
-        total_return = ((values[-1] - self.initial_cash) / self.initial_cash) * 100
-        max_value = np.max(values)
-        min_value = np.min(values)
-        max_dd = ((max_value - min_value) / max_value) * 100
-        
-        stats_text = f'Доходность: {total_return:+.1f}%\nМакс. просадка: {max_dd:.1f}%'
-        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-                
-    def _plot_trades_distribution(self, ax):
-        """График распределения результатов сделок"""
-        if not self.trades_history:
-            ax.text(0.5, 0.5, 'Нет данных о сделках', transform=ax.transAxes,
-                   ha='center', va='center', fontsize=12)
-            return
-            
-        pnls = [trade['pnl'] for trade in self.trades_history]
-        
-        # Гистограмма результатов сделок
-        ax.hist(pnls, bins=20, alpha=0.7, color='purple', edgecolor='black')
-        ax.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Безубыточность')
-        
-        ax.set_title('📊 Распределение результатов сделок', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Прибыль/Убыток за сделку', fontsize=12)
-        ax.set_ylabel('Количество сделок', fontsize=12)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Статистика сделок
-        profitable_trades = len([p for p in pnls if p > 0])
-        losing_trades = len([p for p in pnls if p < 0])
-        win_rate = (profitable_trades / len(pnls)) * 100 if pnls else 0
-        avg_profit = np.mean([p for p in pnls if p > 0]) if profitable_trades > 0 else 0
-        avg_loss = np.mean([p for p in pnls if p < 0]) if losing_trades > 0 else 0
-        
-        stats_text = f'Сделок: {len(pnls)}\nВинрейт: {win_rate:.1f}%\nСр. прибыль: {avg_profit:.2f}\nСр. убыток: {avg_loss:.2f}'
-        ax.text(0.98, 0.98, stats_text, transform=ax.transAxes, 
-                verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
-                
-    def print_detailed_stats(self, result: dict):
-        """Детальная статистика результатов"""
-        print("\n📊 ДЕТАЛЬНАЯ СТАТИСТИКА")
-        print("=" * 70)
-        
-        # Основные метрики
-        print(f"💰 Начальный капитал:      ${result['initial_value']:,.2f}")
-        print(f"💰 Финальный капитал:      ${result['final_value']:,.2f}")
-        print(f"📈 Общая доходность:       {result['total_return']:+.2f}%")
-        print(f"💵 Абсолютная прибыль:     ${result['profit_loss']:+,.2f}")
-        
-        # Торговые метрики
-        if result.get('total_trades', 0) > 0:
-            print(f"\n🔄 Торговая статистика:")
-            print(f"   Всего сделок:           {result['total_trades']}")
-            print(f"   Выигрышных сделок:      {result.get('won_trades', 0)}")
-            print(f"   Проигрышных сделок:     {result.get('lost_trades', 0)}")
-            print(f"   Винрейт:                {result.get('win_rate', 0):.1f}%")
-            print(f"   Profit Factor:          {result.get('profit_factor', 0):.2f}")
-        
-        # Риск-метрики
-        if 'sharpe_ratio' in result:
-            print(f"\n📊 Риск-метрики:")
-            print(f"   Коэффициент Шарпа:      {result['sharpe_ratio']:.3f}")
-            print(f"   Максимальная просадка:  {result['max_drawdown']:.2f}%")
-            
-        # Параметры стратегии
-        if result.get('parameters'):
-            print(f"\n⚙️ Параметры стратегии:")
-            for param, value in result['parameters'].items():
-                print(f"   {param}: {value}")
-                
-        print("=" * 70)
-        
-    def run_interactive_session(self):
-        """Запуск интерактивной сессии"""
-        print("🎯 ИНТЕРАКТИВНЫЙ БЭКТЕСТЕР")
-        print("=" * 50)
-        print("Добро пожаловать в интерактивный режим тестирования стратегий!")
-        print()
+        print(f"   {len(timeframes) + 1}. Все таймфреймы")
         
         while True:
-            # Выбор стратегии
-            strategy_name = self.select_strategy_interactive()
-            if not strategy_name:
-                print("\n👋 До свидания!")
-                break
-                
-            # Настройка параметров
-            print(f"\n⚙️ НАСТРОЙКА ПАРАМЕТРОВ")
-            print("-" * 30)
-            
-            # Таймфрейм
-            timeframe = self.select_timeframe_interactive()
-
-            # Запуск тестирования
             try:
-                result = self.run_enhanced_backtest(
+                choice = input(f"Выберите таймфрейм (1-{len(timeframes) + 1}): ").strip()
+                choice_num = int(choice)
+                
+                if 1 <= choice_num <= len(timeframes):
+                    selected_tf = timeframes[choice_num - 1]
+                    print(f"✅ Выбран таймфрейм: {selected_tf}")
+                    return selected_tf
+                elif choice_num == len(timeframes) + 1:
+                    print("✅ Выбраны все таймфреймы")
+                    return "all"
+                else:
+                    print(f"❌ Введите число от 1 до {len(timeframes) + 1}")
+            except ValueError:
+                print("❌ Введите корректное число")
+            except KeyboardInterrupt:
+                print("\n👋 Выход из программы")
+                sys.exit(0)
+    
+    def run_strategy_on_all_pairs(self, 
+                                 strategy_name: str, 
+                                 selected_timeframe: str = "all",
+                                 custom_params: Dict[str, Any] = None) -> pd.DataFrame:
+        """
+        Запуск выбранной стратегии на всех доступных парах
+        
+        Args:
+            strategy_name: Название стратегии
+            selected_timeframe: Выбранный таймфрейм или "all"
+            custom_params: Кастомные параметры стратегии
+            
+        Returns:
+            pd.DataFrame: Результаты тестирования
+        """
+        all_pairs = self.get_all_data_pairs()
+        
+        # Фильтруем по таймфрейму если нужно
+        if selected_timeframe != "all":
+            all_pairs = [pair for pair in all_pairs if pair[2] == selected_timeframe]
+        
+        print(f"\n🚀 ЗАПУСК МУЛЬТИ-ТЕСТИРОВАНИЯ")
+        print("="*80)
+        print(f"📊 Стратегия: {strategy_name}")
+        print(f"⏰ Таймфрейм: {selected_timeframe}")
+        print(f"💎 Пар для тестирования: {len(all_pairs)}")
+        print(f"💰 Начальный капитал: ${self.backtester.initial_cash:,.0f}")
+        
+        if custom_params:
+            print(f"⚙️ Параметры: {custom_params}")
+        
+        print("="*80)
+        
+        results = []
+        successful_tests = 0
+        failed_tests = 0
+        
+        start_time = time.time()
+        
+        for i, (exchange, symbol, timeframe) in enumerate(all_pairs, 1):
+            pair_name = f"{exchange}:{symbol}:{timeframe}"
+            print(f"⏳ [{i:2d}/{len(all_pairs)}] Тестирование: {pair_name}")
+            
+            try:
+                result = self.backtester.run_single_backtest(
                     strategy_name=strategy_name,
-                    timeframe=timeframe
+                    exchange=exchange,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    strategy_params=custom_params,
+                    show_plot=False,
+                    verbose=False,
+                    suppress_strategy_errors=True
                 )
                 
-                # Детальная статистика
-                self.print_detailed_stats(result)
+                # Добавляем информацию о паре к результату
+                result['exchange'] = exchange
+                result['symbol'] = symbol
+                result['timeframe'] = timeframe
+                result['pair_name'] = f"{exchange}:{symbol}"
+                result['full_pair_name'] = pair_name
                 
-                # Вопрос о графиках
-                show_plots = input("\n📊 Показать графики? (y/n, по умолчанию y): ").strip().lower()
-                if show_plots != 'n':
-                    print("\n📈 Построение графиков...")
-                    self.plot_enhanced_results(strategy_name, timeframe=timeframe)
+                results.append(result)
+                successful_tests += 1
                 
-            except FileNotFoundError as e:
-                print(f"\n❌ Ошибка: {e}")
-                print(f"💡 Попробуйте использовать таймфрейм 1d")
-
+                # Краткий вывод результата
+                return_pct = result.get('total_return', 0)
+                trades_count = result.get('total_trades', 0)
+                print(f"✅ {return_pct:+6.1f}% | {trades_count:3d} сделок")
+                
             except Exception as e:
-                print(f"\n❌ Ошибка тестирования: {e}")
-                import traceback
-                traceback.print_exc()
-
-            # Продолжить?
-            continue_testing = input("\n🔄 Протестировать другую стратегию? (y/n): ").strip().lower()
-            if continue_testing != 'y':
-                print("\n👋 Тестирование завершено!")
-                break
+                failed_tests += 1
+                print(f"❌ Ошибка: {str(e)[:50]}...")
+                continue
+        
+        elapsed_time = time.time() - start_time
+        
+        print(f"\n📊 ЗАВЕРШЕНО ЗА {elapsed_time:.1f} СЕК")
+        print(f"✅ Успешно: {successful_tests} | ❌ Ошибок: {failed_tests}")
+        
+        if not results:
+            print("❌ Нет успешных результатов для анализа!")
+            return pd.DataFrame()
+        
+        # Создаем DataFrame с результатами
+        df_results = pd.DataFrame(results)
+        
+        # Сортируем по доходности
+        df_results = df_results.sort_values('total_return', ascending=False)
+        
+        return df_results
+    
+    def display_results_summary(self, results_df: pd.DataFrame, strategy_name: str):
+        """
+        Отображение сводки результатов тестирования
+        
+        Args:
+            results_df: DataFrame с результатами
+            strategy_name: Название стратегии
+        """
+        if results_df.empty:
+            print("❌ Нет результатов для отображения")
+            return
+        
+        print(f"\n🏆 РЕЗУЛЬТАТЫ МУЛЬТИ-ТЕСТИРОВАНИЯ: {strategy_name}")
+        print("="*100)
+        
+        # Топ-10 лучших результатов
+        print("🥇 ТОП-10 ЛУЧШИХ РЕЗУЛЬТАТОВ:")
+        print("-"*100)
+        
+        top_results = results_df.head(10)
+        
+        header = f"{'Ранг':<4} {'Пара':<20} {'Таймфрейм':<10} {'Доходность':<12} {'Сделки':<8} {'Винрейт':<8} {'Шарп':<8}"
+        print(header)
+        print("-"*100)
+        
+        for i, (_, row) in enumerate(top_results.iterrows(), 1):
+            pair_name = row['pair_name']
+            timeframe = row['timeframe']
+            total_return = row.get('total_return', 0)
+            total_trades = row.get('total_trades', 0)
+            win_rate = row.get('win_rate', 0)  # Убрано умножение на 100 - винрейт уже в процентах
+            sharpe = row.get('sharpe_ratio', 0)
+            
+            print(f"{i:<4} {pair_name:<20} {timeframe:<10} {total_return:>+10.1f}% "
+                  f"{total_trades:>6} {win_rate:>6.1f}% {sharpe:>6.2f}")
+        
+        print("="*100)
+        
+        # Статистика по биржам
+        print("\n📊 СТАТИСТИКА ПО БИРЖАМ:")
+        exchange_stats = results_df.groupby('exchange').agg({
+            'total_return': ['mean', 'max', 'min', 'count'],
+            'total_trades': 'mean'
+        }).round(2)
+        
+        print(exchange_stats)
+        
+        # Статистика по символам
+        print("\n💎 СТАТИСТИКА ПО СИМВОЛАМ:")
+        symbol_stats = results_df.groupby('symbol').agg({
+            'total_return': ['mean', 'max', 'count']
+        }).round(2)
+        
+        # Показываем только топ-5 символов по средней доходности
+        symbol_stats_sorted = symbol_stats.sort_values(('total_return', 'mean'), ascending=False)
+        print(symbol_stats_sorted.head())
+        
+        # Лучший результат
+        best_result = results_df.iloc[0]
+        print(f"\n🏆 ЛУЧШИЙ РЕЗУЛЬТАТ:")
+        print(f"   Пара: {best_result['full_pair_name']}")
+        print(f"   Доходность: {best_result['total_return']:+.2f}%")
+        print(f"   Прибыль: ${best_result.get('profit_loss', 0):+,.2f}")
+        print(f"   Сделок: {best_result.get('total_trades', 0)}")
+        print(f"   Винрейт: {best_result.get('win_rate', 0):.1f}%")
+        
+        # Худший результат
+        worst_result = results_df.iloc[-1]
+        print(f"\n💔 ХУДШИЙ РЕЗУЛЬТАТ:")
+        print(f"   Пара: {worst_result['full_pair_name']}")
+        print(f"   Доходность: {worst_result['total_return']:+.2f}%")
+        
+        print("="*100)
+    
+    def save_results_to_csv(self, results_df: pd.DataFrame, strategy_name: str, timeframe: str):
+        """
+        Сохранение результатов в CSV файл
+        
+        Args:
+            results_df: DataFrame с результатами
+            strategy_name: Название стратегии
+            timeframe: Выбранный таймфрейм
+        """
+        if results_df.empty:
+            return
+        
+        # Создаем директорию для результатов
+        results_dir = os.path.join(os.path.dirname(__file__), "multi_pair_results")
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Формируем имя файла
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{strategy_name}_{timeframe}_{timestamp}.csv"
+        filepath = os.path.join(results_dir, filename)
+        
+        # Выбираем ключевые колонки для сохранения
+        save_columns = [
+            'full_pair_name', 'exchange', 'symbol', 'timeframe',
+            'total_return', 'profit_loss', 'total_trades', 'win_rate',
+            'profit_factor', 'sharpe_ratio', 'max_drawdown'
+        ]
+        
+        # Фильтруем доступные колонки
+        available_columns = [col for col in save_columns if col in results_df.columns]
+        
+        results_df[available_columns].to_csv(filepath, index=False, encoding='utf-8')
+        print(f"\n💾 Результаты сохранены в: {filepath}")
+    
+    def run_interactive_session(self):
+        """
+        Запуск интерактивной сессии мульти-тестирования
+        """
+        print("🚀 ИНТЕРАКТИВНЫЙ МУЛЬТИ-БЭКТЕСТЕР")
+        print("="*80)
+        print("Тестирование одной стратегии на всех доступных криптопарах")
+        print("="*80)
+        
+        try:
+            # Показываем доступные данные
+            all_pairs = self.get_all_data_pairs()
+            print(f"\n📊 Доступно {len(all_pairs)} пар данных:")
+            
+            exchanges = set(pair[0] for pair in all_pairs)
+            symbols = set(pair[1] for pair in all_pairs)
+            timeframes = set(pair[2] for pair in all_pairs)
+            
+            print(f"   Биржи: {', '.join(sorted(exchanges))}")
+            print(f"   Символы: {', '.join(sorted(symbols))}")
+            print(f"   Таймфреймы: {', '.join(sorted(timeframes))}")
+            
+            # Выбор стратегии
+            selected_strategy = self.display_strategy_menu()
+            
+            # Выбор таймфрейма
+            selected_timeframe = self.display_timeframe_menu(all_pairs)
+            
+            # Запрос кастомных параметров
+            print(f"\n⚙️ Хотите изменить параметры стратегии? (y/n): ", end="")
+            change_params = input().strip().lower()
+            
+            custom_params = {}
+            if change_params in ['y', 'yes', 'д', 'да']:
+                print("Введите параметры в формате: param1=value1,param2=value2")
+                print("Например: position_size=0.8,rsi_period=21")
+                params_input = input("Параметры: ").strip()
+                
+                if params_input:
+                    try:
+                        for param_pair in params_input.split(','):
+                            key, value = param_pair.split('=')
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            # Пытаемся определить тип значения
+                            try:
+                                if '.' in value:
+                                    custom_params[key] = float(value)
+                                else:
+                                    custom_params[key] = int(value)
+                            except ValueError:
+                                custom_params[key] = value
+                        
+                        print(f"✅ Установлены параметры: {custom_params}")
+                    except Exception as e:
+                        print(f"❌ Ошибка в параметрах: {e}")
+                        print("Используются параметры по умолчанию")
+            
+            # Запуск тестирования
+            results_df = self.run_strategy_on_all_pairs(
+                strategy_name=selected_strategy,
+                selected_timeframe=selected_timeframe,
+                custom_params=custom_params if custom_params else None
+            )
+            
+            if not results_df.empty:
+                # Показываем результаты
+                self.display_results_summary(results_df, selected_strategy)
+                
+                # Предлагаем сохранить результаты
+                print(f"\n💾 Сохранить результаты в CSV? (y/n): ", end="")
+                save_csv = input().strip().lower()
+                
+                if save_csv in ['y', 'yes', 'д', 'да']:
+                    self.save_results_to_csv(results_df, selected_strategy, selected_timeframe)
+                
+                # Предлагаем повторить с другой стратегией
+                print(f"\n🔄 Протестировать другую стратегию? (y/n): ", end="")
+                repeat = input().strip().lower()
+                
+                if repeat in ['y', 'yes', 'д', 'да']:
+                    self.run_interactive_session()
+            
+        except KeyboardInterrupt:
+            print("\n👋 Программа завершена пользователем")
+        except Exception as e:
+            print(f"\n❌ Произошла ошибка: {e}")
 
 
 def main():
-    """Главная функция"""
-    print("🚀 ЗАПУСК ИНТЕРАКТИВНОГО БЭКТЕСТЕРА")
-    print("=" * 50)
+    """Основная функция запуска интерактивного бэктестера"""
     
-    # Создаем бэктестер
-    backtester = InteractiveBacktester(initial_cash=100000, commission=0.001)
+    # Настройки по умолчанию
+    backtester = InteractiveMultiPairBacktester(
+        initial_cash=100000,    # $100,000
+        commission=0.001,       # 0.1%
+        spread=0.0005,         # 0.05%
+        slippage=0.0002        # 0.02%
+    )
     
-    # Проверяем наличие стратегий
-    if not backtester.strategies_registry:
-        print("❌ Стратегии не найдены!")
-        print("Убедитесь, что в папке strategies/TestStrategies/ есть файлы со стратегиями")
-        return
-        
-    print(f"✅ Найдено {len(backtester.strategies_registry)} стратегий")
-    
-    # Запускаем интерактивную сессию
+    # Запуск интерактивной сессии
     backtester.run_interactive_session()
 
 
