@@ -1,0 +1,46 @@
+{
+  "start_time": "2025-06-22T21:02:47.390908",
+  "total_episodes_target": 1000,
+  "total_episodes_completed": 15,
+  "participants": {
+    "participant_\u041c\u0430\u043a\u0430\u0440_1750618952": {
+      "episodes_contributed": 1,
+      "last_sync": "2025-06-22T21:02:47.391915",
+      "status": "active"
+    },
+    "first_participant": {
+      "episodes_contributed": 14,
+      "last_sync": "2025-06-22T21:41:37.291284",
+      "status": "active"
+    }
+  },
+  "model_versions": [
+    {
+      "filename": "model_first_participant_20250622_214639.pth",
+      "participant": "first_participant",
+      "timestamp": "20250622_214639",
+      "episode": 7
+    },
+    {
+      "filename": "model_first_participant_20250622_214958.pth",
+      "participant": "first_participant",
+      "timestamp": "20250622_214958",
+      "episode": 10
+    },
+    {
+      "filename": "model_first_participant_20250622_215140.pth",
+      "participant": "first_participant",
+      "timestamp": "20250622_215140",
+      "episode": 13
+    },
+    {
+      "filename": "model_first_participant_20250622_215230.pth",
+      "participant": "first_participant",
+      "timestamp": "20250622_215230",
+      "episode": 14
+    }
+  ],
+  "best_reward": 50.89926362717243,
+  "data_path": "../../data\\binance\\BTCUSDC\\1d\\2018_01_01-now.csv",
+  "timeframe": "1h"
+}
