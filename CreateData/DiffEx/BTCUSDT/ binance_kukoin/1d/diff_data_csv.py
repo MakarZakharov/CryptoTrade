@@ -156,8 +156,8 @@ def compare_orderbooks():
 
 if __name__ == "__main__":
     print("🔁 Загружаем данные с Binance и KuCoin...")
-    binance_df = get_binance_klines("BTCUSDT", "1d", "2025-06-01")
-    kucoin_df = get_kucoin_klines("BTC-USDT", "1day", "2025-06-01")
+    binance_df = get_binance_klines("BTCUSDT", "1d", "2023-01-01")
+    kucoin_df = get_kucoin_klines("BTC-USDT", "1day", "2023-01-01")
 
     compare_dataframes_avg(binance_df, kucoin_df)
     compare_orderbooks()

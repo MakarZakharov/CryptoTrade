@@ -5,28 +5,28 @@ from datetime import datetime
 import os
 import mplfinance as mpf
 
-def get_kucoin_klines(symbol="BTC-USDT", interval="4hour", start_str="2018-01-01", end_str=None):
+def get_kucoin_klines(symbol="BNB-USDT", interval="4hour", start_str="2019-07-01", end_str=None):
     url = "https://api.kucoin.com/api/v1/market/candles"
     start_ts = int(pd.Timestamp(start_str).timestamp())
     end_ts = int(pd.Timestamp(end_str).timestamp()) if end_str else int(time.time())
     all_klines = []
 
-    step = 14400 * 300  # 300 четырёхчасовых свечей = 50 дней
+    step = 14400 * 300
 
     while start_ts < end_ts:
         params = {
             "symbol": symbol,
             "type": interval,
             "startAt": start_ts,
-            "endAt": min(end_ts, start_ts + step)
+            "endAt": min(end_ts, start_ts + step)  # 300 дней
         }
         r = requests.get(url, params=params)
         r.raise_for_status()
         data = r.json().get("data", [])
         if not data:
             break
-        all_klines += data[::-1]
-        start_ts = int(data[0][0]) + 14400  # следующий 4-часовой интервал
+        all_klines += data[::-1]  # обратный порядок
+        start_ts = int(data[0][0]) + 86400
         time.sleep(0.2)
 
     df = pd.DataFrame(all_klines, columns=[
@@ -41,12 +41,12 @@ def get_kucoin_klines(symbol="BTC-USDT", interval="4hour", start_str="2018-01-01
     df = df[["timestamp", "open", "high", "low", "close", "volume", "quote_volume"]]
     return df
 
-def plot_if_possible(df, symbol, interval):
+def plot_if_possible(df, symbol):
     if df.shape[0] > 500:
         df_plot = df.copy()
         df_plot.set_index("timestamp", inplace=True)
         df_plot = df_plot[["open", "high", "low", "close", "volume"]]
-        title = f"{symbol} KuCoin {interval} Candles"
+        title = f"{symbol} KuCoin 1d Candles"
         mpf.plot(df_plot, type="candle", style="charles", volume=True, title=title, ylabel="Цена", ylabel_lower="Объём")
     else:
         print("Недостаточно данных для построения графика.")
@@ -56,11 +56,11 @@ def save_kucoin():
     if df.shape[0] < 100 or df.isnull().values.any():
         print("Проблема с полученными данными от KuCoin.")
         return
-    path = "../../../../data/KuCoin/BTCUSDT/4h/2018_01_01-now.csv"
+    path = "../../../../data/KuCoin/BNBUSDT/4h/2019_07_01-now.csv"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
     print(f"KuCoin CSV сохранён: {path}")
-    plot_if_possible(df, "BTCUSDT", "4h")
+    plot_if_possible(df, "BNBUSDT")
 
 if __name__ == "__main__":
     save_kucoin()

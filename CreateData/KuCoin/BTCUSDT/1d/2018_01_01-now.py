@@ -39,12 +39,12 @@ def get_kucoin_klines(symbol="BTC-USDT", interval="1day", start_str="2018-01-01"
     df = df[["timestamp", "open", "high", "low", "close", "volume", "quote_volume"]]
     return df
 
-def plot_if_possible(df, symbol):
+def plot_if_possible(df, symbol, interval):
     if df.shape[0] > 500:
         df_plot = df.copy()
         df_plot.set_index("timestamp", inplace=True)
         df_plot = df_plot[["open", "high", "low", "close", "volume"]]
-        title = f"{symbol} KuCoin 1d Candles"
+        title = f"{symbol} KuCoin {interval} Candles"
         mpf.plot(df_plot, type="candle", style="charles", volume=True, title=title, ylabel="Цена", ylabel_lower="Объём")
     else:
         print("Недостаточно данных для построения графика.")
@@ -58,7 +58,7 @@ def save_kucoin():
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
     print(f"KuCoin CSV сохранён: {path}")
-    plot_if_possible(df, "BTCUSDT")
+    plot_if_possible(df, "BTCUSDT", "1d")
 
 if __name__ == "__main__":
     save_kucoin()
