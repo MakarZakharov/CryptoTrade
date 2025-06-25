@@ -5,28 +5,26 @@ from datetime import datetime
 import os
 import mplfinance as mpf
 
-def get_kucoin_klines(symbol="BTC-USDT", interval="4hour", start_str="2018-01-01", end_str=None):
+def get_kucoin_klines(symbol="XRP-USDC", interval="1day", start_str="2021-01-26", end_str=None):
     url = "https://api.kucoin.com/api/v1/market/candles"
     start_ts = int(pd.Timestamp(start_str).timestamp())
     end_ts = int(pd.Timestamp(end_str).timestamp()) if end_str else int(time.time())
     all_klines = []
-
-    step = 14400 * 300  # 300 четырёхчасовых свечей = 50 дней
 
     while start_ts < end_ts:
         params = {
             "symbol": symbol,
             "type": interval,
             "startAt": start_ts,
-            "endAt": min(end_ts, start_ts + step)
+            "endAt": min(end_ts, start_ts + 86400 * 300)  # 300 дней
         }
         r = requests.get(url, params=params)
         r.raise_for_status()
         data = r.json().get("data", [])
         if not data:
             break
-        all_klines += data[::-1]
-        start_ts = int(data[0][0]) + 14400  # следующий 4-часовой интервал
+        all_klines += data[::-1]  # обратный порядок
+        start_ts = int(data[0][0]) + 86400
         time.sleep(0.2)
 
     df = pd.DataFrame(all_klines, columns=[
@@ -56,11 +54,11 @@ def save_kucoin():
     if df.shape[0] < 100 or df.isnull().values.any():
         print("Проблема с полученными данными от KuCoin.")
         return
-    path = "../../../../data/KuCoin/BTCUSDT/4h/2018_01_01-now.csv"
+    path = "../../../../data/KuCoin/XRPUSDC/1d/2021_01_26-now.csv"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
     print(f"KuCoin CSV сохранён: {path}")
-    plot_if_possible(df, "BTCUSDT", "4h")
+    plot_if_possible(df, "XRPUSDC", "1d")
 
 if __name__ == "__main__":
     save_kucoin()
