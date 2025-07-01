@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-drl.com/schemas/features.json",
+  "title": "Trading Features Schema",
+  "description": "Schema for processed trading features used in ML models",
+  "type": "object",
+  "properties": {
+    "feature_set": {
+      "type": "string",
+      "description": "Name of the feature set",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Feature set version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "Feature creation timestamp",
+      "format": "date-time"
+    },
+    "symbols": {
+      "type": "array",
+      "description": "Trading symbols included",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{2,10}/[A-Z]{2,10}$"
+      },
+      "minItems": 1
+    },
+    "timeframe": {
+      "type": "string",
+      "description": "Data timeframe",
+      "enum": ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"]
+    },
+    "features": {
+      "type": "object",
+      "description": "Feature categories",
+      "properties": {
+        "price_features": {
+          "type": "array",
+          "description": "Price-based features",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Feature name"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["continuous", "discrete", "categorical"]
+              },
+              "description": {
+                "type": "string",
+                "description": "Feature description"
+              },
+              "source": {
+                "type": "string",
+                "description": "Source of feature (e.g., 'ohlcv', 'derived')"
+              },
+              "normalization": {
+                "type": "string",
+                "enum": ["none", "standard", "minmax", "robust", "log"]
+              },
+              "window_size": {
+                "type": "integer",
+                "description": "Lookback window size",
+                "minimum": 1
+              }
+            },
+            "required": ["name", "type", "source"],
+            "additionalProperties": false
+          }
+        },
+        "technical_indicators": {
+          "type": "array",
+          "description": "Technical indicator features",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Indicator name"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["continuous", "discrete", "categorical"]
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Indicator parameters",
+                "additionalProperties": true
+              },
+              "library": {
+                "type": "string",
+                "description": "Library used (e.g., 'talib', 'pandas_ta')"
+              },
+              "normalization": {
+                "type": "string",
+                "enum": ["none", "standard", "minmax", "robust", "log"]
+              }
+            },
+            "required": ["name", "type"],
+            "additionalProperties": false
+          }
+        },
+        "volume_features": {
+          "type": "array",
+          "description": "Volume-based features",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Feature name"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["continuous", "discrete", "categorical"]
+              },
+              "description": {
+                "type": "string",
+                "description": "Feature description"
+              },
+              "normalization": {
+                "type": "string",
+                "enum": ["none", "standard", "minmax", "robust", "log"]
+              }
+            },
+            "required": ["name", "type"],
+            "additionalProperties": false
+          }
+        },
+        "portfolio_features": {
+          "type": "array",
+          "description": "Portfolio state features",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Feature name"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["continuous", "discrete", "categorical"]
+              },
+              "description": {
+                "type": "string",
+                "description": "Feature description"
+              },
+              "source": {
+                "type": "string",
+                "enum": ["portfolio", "positions", "performance", "risk"]
+              }
+            },
+            "required": ["name", "type", "source"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "preprocessing": {
+      "type": "object",
+      "description": "Preprocessing configuration",
+      "properties": {
+        "missing_value_strategy": {
+          "type": "string",
+          "enum": ["drop", "forward_fill", "backward_fill", "interpolate", "zero"]
+        },
+        "outlier_detection": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["iqr", "zscore", "isolation_forest", "none"]
+            },
+            "threshold": {
+              "type": "number",
+              "description": "Outlier threshold"
+            }
+          }
+        },
+        "feature_selection": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["variance", "correlation", "mutual_info", "rfe", "none"]
+            },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "type": "object",
+      "description": "Feature validation results",
+      "properties": {
+        "data_quality_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "missing_values_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "outliers_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "feature_correlations": {
+          "type": "object",
+          "description": "High correlation pairs",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["feature_set", "version", "symbols", "timeframe", "features"],
+  "additionalProperties": false
+}

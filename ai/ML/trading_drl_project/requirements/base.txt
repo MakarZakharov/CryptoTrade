@@ -1,0 +1,26 @@
+# Core dependencies for all environments
+pandas>=1.5.0
+numpy>=1.21.0
+gymnasium>=0.28.0
+stable-baselines3>=2.0.0
+finrl>=0.3.0
+ta>=0.10.0
+btalib>=1.0.0
+pandas-ta>=0.3.0
+optuna>=3.0.0
+ray[tune]>=2.0.0
+ccxt>=4.0.0
+plotly>=5.0.0
+scikit-learn>=1.2.0
+tensorflow>=2.12.0
+torch>=2.0.0
+fastapi>=0.104.0
+pydantic>=2.4.0
+sqlalchemy>=2.0.0
+redis>=5.0.0
+celery>=5.3.0
+pyyaml>=6.0.0
+requests>=2.31.0
+websockets>=11.0.0
+asyncio-mqtt>=0.16.0
+prometheus-client>=0.18.0
