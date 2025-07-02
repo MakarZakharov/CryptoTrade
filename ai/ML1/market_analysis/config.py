@@ -1,0 +1,39 @@
+"""
+Configuration settings for the market analysis system.
+"""
+
+# Data fetching settings
+BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
+DEFAULT_TIMEFRAME = "1d"
+DEFAULT_LIMIT = 1000
+
+# Data processing settings
+DEFAULT_WINDOW_SIZE = 60
+DEFAULT_TRAIN_SPLIT = 0.7
+DEFAULT_VAL_SPLIT = 0.15
+DEFAULT_TEST_SPLIT = 0.15
+
+# Model settings
+DEFAULT_LSTM_UNITS = 50
+DEFAULT_DROPOUT_RATE = 0.2
+DEFAULT_LEARNING_RATE = 0.001
+
+# Training settings
+DEFAULT_BATCH_SIZE = 32
+DEFAULT_EPOCHS = 100
+DEFAULT_EARLY_STOPPING_PATIENCE = 10
+DEFAULT_REDUCE_LR_PATIENCE = 5
+DEFAULT_REDUCE_LR_FACTOR = 0.2
+DEFAULT_MIN_LR = 0.0001
+
+# Trading settings
+DEFAULT_INITIAL_BALANCE = 100.0
+DEFAULT_TRADING_FEE = 0.001  # 0.1%
+
+# Technical indicators
+RSI_PERIOD = 14
+SMA_SHORT_PERIOD = 5
+SMA_LONG_PERIOD = 20
+
+# Visualization settings
+PLOT_FIGSIZE = (18, 15)

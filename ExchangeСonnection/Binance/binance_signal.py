@@ -628,14 +628,19 @@ class UnifiedCryptoTrader:
             return self._test_uniswap_convert(from_asset, to_asset, amount, is_max)
         try:
             if not self.uniswap or not self.web3:
+                print("❌ Uniswap або Web3 не підключено")
                 return False
             from_asset, to_asset = from_asset.upper(), to_asset.upper()
             
             # Перевірка балансу ETH для газу
             eth_balance = self.web3.eth.get_balance(self.address)
             eth_balance_ether = float(self.web3.from_wei(eth_balance, 'ether'))
-            if eth_balance_ether < 0.01:
-                print(f"❌ Недостатньо ETH для газу: {eth_balance_ether:.6f} ETH (потрібно мінімум 0.01 ETH)")
+            required_eth = 0.015  # Збільшуємо мінімальний баланс для надійності
+            
+            if eth_balance_ether < required_eth:
+                print(f"❌ Недостатньо ETH для газу: {eth_balance_ether:.6f} ETH")
+                print(f"💡 Потрібно мінімум {required_eth} ETH для Uniswap операцій")
+                print(f"💰 Поповніть ETH баланс або використайте Binance")
                 return False
             
             # Спеціальна обробка для BNB через BSC мережу
@@ -839,21 +844,55 @@ class UnifiedCryptoTrader:
             success = self._test_convert_realistic(from_asset, to_asset, convert_amount, is_max)
         else:
             success = False
-            # Додаємо мапінг BTC -> WBTC для Uniswap
-            uniswap_from = 'WBTC' if from_asset == 'BTC' else from_asset
-            uniswap_to = 'WBTC' if to_asset == 'BTC' else to_asset
             
-            if self.use_uniswap and uniswap_from in self.token_addresses and uniswap_to in self.token_addresses:
-                print("🦄 Спроба конвертації через Uniswap...")
-                success = self._uniswap_convert(uniswap_from, uniswap_to, convert_amount, is_max)
-            
-            if not success and self.ccxt_exchange:
-                print("🔧 Спроба конвертації через CCXT...")
-                success = self._ccxt_convert(from_asset, to_asset, convert_amount, is_max)
+            # Спеціальна логіка для BTC конвертації
+            if from_asset == 'BTC' or to_asset == 'BTC':
+                # Для BTC спочатку пробуємо Uniswap з WBTC мапінгом
+                uniswap_from = 'WBTC' if from_asset == 'BTC' else from_asset
+                uniswap_to = 'WBTC' if to_asset == 'BTC' else to_asset
                 
-            if not success and self.binance_client:
-                print("🔶 Спроба конвертації через Binance...")
-                success = self._binance_convert(from_asset, to_asset, convert_amount, is_max)
+                if (self.use_uniswap and uniswap_from in self.token_addresses 
+                    and uniswap_to in self.token_addresses):
+                    print("🦄 Спроба конвертації BTC через Uniswap (WBTC)...")
+                    
+                    # Перевіряємо ETH баланс заздалегідь
+                    if self.web3:
+                        eth_balance = self.web3.eth.get_balance(self.address)
+                        eth_balance_ether = float(self.web3.from_wei(eth_balance, 'ether'))
+                        if eth_balance_ether < 0.015:
+                            print(f"⚠️ Недостатньо ETH для газу ({eth_balance_ether:.6f} ETH)")
+                            print("🔄 Автоматичне переключення на Binance...")
+                        else:
+                            success = self._uniswap_convert(uniswap_from, uniswap_to, convert_amount, is_max)
+                            if success:
+                                print(f"✅ BTC успішно конвертовано через Uniswap як WBTC")
+                
+                # Якщо Uniswap не вдався, пробуємо Binance/CCXT
+                if not success:
+                    if self.ccxt_exchange:
+                        print("🔧 Спроба конвертації BTC через CCXT...")
+                        success = self._ccxt_convert(from_asset, to_asset, convert_amount, is_max)
+                    
+                    if not success and self.binance_client:
+                        print("🔶 Спроба конвертації BTC через Binance...")
+                        success = self._binance_convert(from_asset, to_asset, convert_amount, is_max)
+            else:
+                # Для інших токенів стандартна логіка
+                uniswap_from = from_asset
+                uniswap_to = to_asset
+                
+                if (self.use_uniswap and uniswap_from in self.token_addresses 
+                    and uniswap_to in self.token_addresses):
+                    print("🦄 Спроба конвертації через Uniswap...")
+                    success = self._uniswap_convert(uniswap_from, uniswap_to, convert_amount, is_max)
+                
+                if not success and self.ccxt_exchange:
+                    print("🔧 Спроба конвертації через CCXT...")
+                    success = self._ccxt_convert(from_asset, to_asset, convert_amount, is_max)
+                    
+                if not success and self.binance_client:
+                    print("🔶 Спроба конвертації через Binance...")
+                    success = self._binance_convert(from_asset, to_asset, convert_amount, is_max)
                 
         if success:
             self._show_conversion_remainder(from_asset, initial_balance, is_max)
@@ -961,14 +1000,32 @@ class UnifiedCryptoTrader:
                     eth_balance = self.get_balance('ETH')
                     if eth_balance > 0:
                         balances['ETH'] = eth_balance
+                    else:
+                        # Показуємо ETH баланс навіть якщо він 0 для Uniswap користувачів
+                        balances['ETH'] = 0.0
                 except Exception as e:
                     print(f"❌ Помилка ETH балансу: {e}")
         total_usd = 0
         for asset, amount in balances.items():
             usd_value = amount * self.rates.get(asset, 1.0)
             total_usd += usd_value
-            print(f"  {asset}: {amount:,.8f} (~${usd_value:,.2f})")
+            status_indicator = ""
+            if asset == 'ETH' and self.use_uniswap and not self.testnet:
+                if amount < 0.015:
+                    status_indicator = " ⚠️ (недостатньо для Uniswap газу)"
+                else:
+                    status_indicator = " ✅ (достатньо для Uniswap)"
+            print(f"  {asset}: {amount:,.8f} (~${usd_value:,.2f}){status_indicator}")
         print(f"💵 Загалом: ${total_usd:,.2f}")
+        
+        # Додаткова інформація для Uniswap користувачів
+        if self.use_uniswap and not self.testnet:
+            eth_balance = balances.get('ETH', 0)
+            if eth_balance < 0.015:
+                print(f"\n💡 Рекомендації для Uniswap:")
+                print(f"   • Поповніть ETH баланс до мінімум 0.015 ETH")
+                print(f"   • Потрібно ~${0.015 * self.rates.get('ETH', 2500):.2f} USD для газу")
+                print(f"   • Або використовуйте Binance для конвертації BTC")
 
     def add_test_balance(self, asset: str, amount: float):
         if not self.testnet:
