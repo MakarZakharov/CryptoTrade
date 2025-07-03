@@ -8,8 +8,8 @@ from typing import Optional, Union
 from datetime import datetime
 import time
 
-from market_analysis.data.fetchers.base_fetcher import BaseFetcher
-from market_analysis.config import BINANCE_API_URL, DEFAULT_LIMIT
+from ai.ML1.market_analysis.data.fetchers.base_fetcher import BaseFetcher
+from ai.ML1.market_analysis.config import BINANCE_API_URL, DEFAULT_LIMIT
 
 
 class BinanceFetcher(BaseFetcher):

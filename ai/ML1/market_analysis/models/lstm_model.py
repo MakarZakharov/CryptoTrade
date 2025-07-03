@@ -11,6 +11,7 @@ from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.losses import mean_squared_error
 
 # Handle both package import and direct script execution
 try:
@@ -223,8 +224,11 @@ class LSTMModel(BaseModel):
         if not os.path.exists(path):
             raise FileNotFoundError(f"Model file not found: {path}")
         
-        # Load the model
-        self.model = load_model(path)
+        # Load the model with custom objects to handle 'mse' loss function
+        custom_objects = {
+            'mse': mean_squared_error
+        }
+        self.model = load_model(path, custom_objects=custom_objects)
         self.is_trained = True
         
         # Load metadata

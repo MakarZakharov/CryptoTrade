@@ -566,25 +566,33 @@ class VotingEnsembleModel(BaseModel):
                 try:
                     from .lstm_model import LSTMModel
                 except ImportError:
-                    from market_analysis.models.lstm_model import LSTMModel
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    sys.path.append(current_dir)
+                    from lstm_model import LSTMModel
                 model = LSTMModel(input_shape=(1, 1))  # Placeholder shape
             elif 'GRU' in model_name:
                 try:
                     from .gru_model import GRUModel
                 except ImportError:
-                    from market_analysis.models.gru_model import GRUModel
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    sys.path.append(current_dir)
+                    from gru_model import GRUModel
                 model = GRUModel(input_shape=(1, 1))  # Placeholder shape
             elif 'Transformer' in model_name:
                 try:
                     from .transformer_model import TransformerModel
                 except ImportError:
-                    from market_analysis.models.transformer_model import TransformerModel
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    sys.path.append(current_dir)
+                    from transformer_model import TransformerModel
                 model = TransformerModel(input_shape=(1, 1))  # Placeholder shape
             elif 'XGBoost' in model_name:
                 try:
                     from .xgboost_model import XGBoostModel
                 except ImportError:
-                    from market_analysis.models.xgboost_model import XGBoostModel
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    sys.path.append(current_dir)
+                    from xgboost_model import XGBoostModel
                 model = XGBoostModel()
             else:
                 raise ValueError(f"Unknown model type: {model_name}")

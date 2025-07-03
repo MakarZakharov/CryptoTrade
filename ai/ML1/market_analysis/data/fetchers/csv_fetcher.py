@@ -7,7 +7,7 @@ from typing import Optional, Union
 from datetime import datetime
 import os
 
-from market_analysis.data.fetchers.base_fetcher import BaseFetcher
+from ai.ML1.market_analysis.data.fetchers.base_fetcher import BaseFetcher
 
 
 class CSVFetcher(BaseFetcher):
@@ -58,8 +58,12 @@ class CSVFetcher(BaseFetcher):
             return pd.DataFrame()
         
         try:
-            # Load the CSV file
-            df = pd.read_csv(file_path)
+            # Preprocess the CSV file to handle potential Git merge conflict markers
+            df = self._preprocess_csv(file_path)
+            
+            # Check if the dataframe is empty after preprocessing
+            if df.empty:
+                return pd.DataFrame()
             
             # Check if the timestamp column exists
             if 'timestamp' not in df.columns:
@@ -134,3 +138,41 @@ class CSVFetcher(BaseFetcher):
         
         # Default to the first path if none exist
         return possible_paths[0]
+        
+    def _preprocess_csv(self, file_path: str) -> pd.DataFrame:
+        """
+        Preprocess the CSV file to handle Git merge conflict markers.
+        
+        Args:
+            file_path: Path to the CSV file
+            
+        Returns:
+            DataFrame with the processed data
+        """
+        try:
+            # Read the file line by line and filter out Git merge conflict markers
+            filtered_lines = []
+            header = None
+            
+            with open(file_path, 'r') as file:
+                for line in file:
+                    # Skip lines with Git merge conflict markers
+                    if any(marker in line for marker in ['<<<<<<< ', '=======', '>>>>>>> ']):
+                        print(f"Skipping Git merge conflict marker: {line.strip()}")
+                        continue
+                    
+                    # Keep the header line
+                    if header is None:
+                        header = line
+                        filtered_lines.append(line)
+                    else:
+                        filtered_lines.append(line)
+            
+            # Create a DataFrame from the filtered lines
+            from io import StringIO
+            csv_data = StringIO(''.join(filtered_lines))
+            return pd.read_csv(csv_data)
+            
+        except Exception as e:
+            print(f"Error preprocessing CSV file {file_path}: {e}")
+            return pd.DataFrame()

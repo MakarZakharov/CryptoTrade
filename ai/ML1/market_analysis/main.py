@@ -6,16 +6,22 @@ import argparse
 import pandas as pd
 import numpy as np
 import os
+import sys
 from datetime import datetime
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 
-from data.fetchers.binance_fetcher import BinanceFetcher
-from data.fetchers.csv_fetcher import CSVFetcher
-from data.processors.price_processor import PriceProcessor
-from data.features.technical_indicators import TechnicalIndicators
-from data.features.feature_selector import FeatureSelector
-from models.model_factory import ModelFactory
+# Add the CRYPTO_BOT directory to the Python path
+crypto_bot_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+sys.path.insert(0, crypto_bot_dir)
+
+# Now we can import using the full path from the CRYPTO_BOT directory
+from ai.ML1.market_analysis.data.fetchers.binance_fetcher import BinanceFetcher
+from ai.ML1.market_analysis.data.fetchers.csv_fetcher import CSVFetcher
+from ai.ML1.market_analysis.data.processors.price_processor import PriceProcessor
+from ai.ML1.market_analysis.data.features.technical_indicators import TechnicalIndicators
+from ai.ML1.market_analysis.data.features.feature_selector import FeatureSelector
+from ai.ML1.market_analysis.models.model_factory import ModelFactory
 
 
 def parse_arguments():
@@ -23,17 +29,17 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Cryptocurrency Market Analysis')
     
     # Data parameters
-    parser.add_argument('--symbol', type=str, default='BTCUSDT',
-                        help='Trading symbol (default: BTCUSDT)')
+    parser.add_argument('--symbol', type=str, default='BTCUSDC',
+                        help='Trading symbol (default: BTCUSDC)')
     parser.add_argument('--timeframe', type=str, default='1d',
                         help='Timeframe interval (default: 1d)')
     parser.add_argument('--start_date', type=str, default='2020-01-01',
                         help='Start date for data (default: 2020-01-01)')
     parser.add_argument('--end_date', type=str, default=None,
                         help='End date for data (default: None/current)')
-    parser.add_argument('--data_source', type=str, default='binance', choices=['binance', 'csv'],
-                        help='Data source (default: binance)')
-    parser.add_argument('--csv_path', type=str, default=None,
+    parser.add_argument('--data_source', type=str, default='csv', choices=['binance', 'csv'],
+                        help='Data source (default: csv)')
+    parser.add_argument('--csv_path', type=str, default='/home/newuser/CRYPTO_BOT/data/binance/BTCUSDC/1d/2018_01_01-now.csv',
                         help='Path to CSV file if data_source is csv')
     
     # Preprocessing parameters
@@ -113,20 +119,16 @@ def process_data(data, args):
     """Process the data for model training and evaluation."""
     print("🔄 Processing data...")
     
-    # Process price data
-    processor = PriceProcessor()
-    df = processor.process(data)
-    
-    # Add technical indicators
+    # Add technical indicators first
     indicators = TechnicalIndicators()
-    df = indicators.add_all_indicators(df)
+    df = indicators.add_all_indicators(data)
     
     # Drop rows with NaN values
     df.dropna(inplace=True)
     
     # Select features
-    selector = FeatureSelector()
-    selected_features = selector.select_features(df, target_column='close')
+    selector = FeatureSelector(target_column='close')
+    selected_features_df, selected_features = selector.select_features(df)
     
     # Prepare features and target
     features = df[selected_features].values
@@ -230,7 +232,7 @@ def train_model(model, X_train, y_train, X_val, y_val, args):
     print("🏋️ Training model...")
     
     # Prepare data for XGBoost if needed
-    from market_analysis.models.xgboost_model import XGBoostModel
+    from ai.ML1.market_analysis.models.xgboost_model import XGBoostModel
     if isinstance(model, XGBoostModel):
         X_train_flat = X_train.reshape(X_train.shape[0], -1)
         X_val_flat = X_val.reshape(X_val.shape[0], -1)
@@ -260,7 +262,7 @@ def evaluate_model(model, X_test, y_test, scaler):
     print("📏 Evaluating model...")
     
     # Prepare data for XGBoost if needed
-    from market_analysis.models.xgboost_model import XGBoostModel
+    from ai.ML1.market_analysis.models.xgboost_model import XGBoostModel
     if isinstance(model, XGBoostModel):
         X_test_flat = X_test.reshape(X_test.shape[0], -1)
         y_pred = model.predict(X_test_flat)
@@ -297,8 +299,10 @@ def plot_results(evaluation_results, args):
     
     print("📈 Generating visualizations...")
     
-    # Create directory for plots
-    os.makedirs('plots', exist_ok=True)
+    # Create directory for plots relative to the script location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    plots_dir = os.path.join(script_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
     
     # Plot predictions vs actual
     plt.figure(figsize=(12, 6))
@@ -312,7 +316,7 @@ def plot_results(evaluation_results, args):
     plt.tight_layout()
     
     # Save the plot
-    plot_path = f"plots/{args.model_type}_{args.symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    plot_path = os.path.join(plots_dir, f"{args.model_type}_{args.symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     plt.savefig(plot_path)
     print(f"✅ Plot saved to {plot_path}")
     
