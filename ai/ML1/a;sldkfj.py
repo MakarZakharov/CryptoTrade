@@ -26,7 +26,7 @@ class LSTMSequencePredictor:
         """
         if csv_path is None:
             # Путь к данным BTC/USDT
-            csv_path = os.path.join("..", "..", "data", "binance", "BTCUSDT", "1d", "2018_01_01-now.csv")
+            csv_path = os.path.join("..", "..", "data", "binance", "BTCUSDT", "1d", "2018_12_15-now.csv")
         
         # Загрузка данных
         df = pd.read_csv(csv_path)

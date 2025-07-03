@@ -88,5 +88,5 @@ if __name__ == "__main__":
         symbol="ETHUSDC",
         interval="1d",
         start_date="2018-01-01",
-        filename="../../../../data/binance/ETHUSDC/1d/2018_01_01-now.csv"
+        filename="../../../../data/binance/ETHUSDC/1d/2018_12_15-now.csv"
     )
