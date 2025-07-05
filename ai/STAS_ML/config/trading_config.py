@@ -59,8 +59,10 @@ class TradingConfig:
     
     def __post_init__(self):
         if self.data_path is None:
+            # Get absolute path to data file
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
             self.data_path = os.path.join(
-                'CryptoTrade', 'data', self.exchange, self.symbol, 
+                project_root, 'CryptoTrade', 'data', self.exchange, self.symbol, 
                 self.timeframe, '2018_01_01-now.csv'
             )
 
@@ -71,7 +73,9 @@ class DataManager:
     @staticmethod
     def get_available_pairs() -> Dict[str, List[str]]:
         """Получить доступные торговые пары по биржам."""
-        data_root = os.path.join('CryptoTrade', 'data')
+        # Get absolute path to data directory
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        data_root = os.path.join(project_root, 'CryptoTrade', 'data')
         available_pairs = {}
         
         if not os.path.exists(data_root):
@@ -96,7 +100,9 @@ class DataManager:
     @staticmethod
     def get_available_timeframes(exchange: str, symbol: str) -> List[str]:
         """Получить доступные таймфреймы для пары."""
-        symbol_path = os.path.join('CryptoTrade', 'data', exchange, symbol)
+        # Get absolute path to data directory
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        symbol_path = os.path.join(project_root, 'CryptoTrade', 'data', exchange, symbol)
         timeframes = []
         
         if os.path.exists(symbol_path):

@@ -1,12 +1,12 @@
 import os
 import numpy as np
 import torch
-from stable_baselines3 import DQN
+from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
 from .base_agent import BaseAgent
 
-class DQNAgent(BaseAgent):
+class PPOAgent(BaseAgent):
     def __init__(self, config):
         super().__init__(config)
         self.model = None
@@ -26,31 +26,35 @@ class DQNAgent(BaseAgent):
         return device
         
     def create_model(self, env, model_config=None):
-        """Создать модель DQN."""
+        """Создать модель PPO."""
         # Оборачиваем среду
         self.vec_env = DummyVecEnv([lambda: env])
         
-        # Параметры модели по умолчанию
+        # Оптимизированные параметры для прибыльной торговли на 15мин
         default_config = {
-            'learning_rate': 1e-4,
-            'buffer_size': 100000,
-            'learning_starts': 1000,
-            'batch_size': 32,
-            'gamma': 0.99,
-            'train_freq': 4,
-            'gradient_steps': 1,
-            'target_update_interval': 1000,
-            'exploration_fraction': 0.1,
-            'exploration_initial_eps': 1.0,
-            'exploration_final_eps': 0.05,
-            'verbose': 1
+            'learning_rate': 1e-4,  # Более стабильное обучение
+            'n_steps': 1024,  # Меньше шагов для частых обновлений
+            'batch_size': 128,  # Больше размер батча для стабильности
+            'n_epochs': 4,  # Меньше эпох для предотвращения переобучения
+            'gamma': 0.995,  # Выше для важности будущих наград
+            'gae_lambda': 0.98,  # Выше для лучшей оценки преимуществ
+            'clip_range': 0.15,  # Более консервативная политика
+            'ent_coef': 0.01,  # Небольшое исследование для стабильности
+            'vf_coef': 0.25,  # Меньший вес функции ценности
+            'max_grad_norm': 0.3,  # Более строгий клиппинг градиентов
+            'verbose': 1,
+            # Дополнительные параметры для стабильности
+            'use_sde': False,  # Отключаем стохастическое исследование
+            'sde_sample_freq': -1,
+            'target_kl': 0.01,  # Ограничиваем изменения политики
+            'normalize_advantage': True  # Нормализация преимуществ
         }
         
         if model_config:
             default_config.update(model_config)
         
-        # Создаем модель DQN
-        self.model = DQN(
+        # Создаем модель PPO
+        self.model = PPO(
             "MlpPolicy",
             self.vec_env,
             device=self.device,
@@ -89,5 +93,5 @@ class DQNAgent(BaseAgent):
         if env:
             self.vec_env = DummyVecEnv([lambda: env])
         
-        self.model = DQN.load(path, env=self.vec_env)
+        self.model = PPO.load(path, env=self.vec_env)
         return self.model 

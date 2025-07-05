@@ -384,22 +384,22 @@ class CompositeRewardScheme:
         self.component_history = {type(scheme).__name__: [] for scheme in schemes}
     
     def calculate(self, env_state: Dict) -> float:
-        """Розрахувати загальну винагороду зі збалансованим клипінгом."""
+        """Рассчитать общую награду с клиппингом для стабильности."""
         total_reward = 0.0
         components = {}
         
         for scheme in self.schemes:
             component_reward = scheme.calculate(env_state)
-            # Розширений клиппінг компонентів для більшого діапазону
-            component_reward = np.clip(component_reward, -25.0, 25.0)
+            # Клиппинг компонентов для предотвращения экстремальных значений
+            component_reward = np.clip(component_reward, -10.0, 10.0)
             total_reward += component_reward
             
             scheme_name = type(scheme).__name__
             components[scheme_name] = component_reward
             self.component_history[scheme_name].append(component_reward)
         
-        # Розширений клиппінг підсумкової винагороди для кращого навчання
-        total_reward = np.clip(total_reward, -100.0, 100.0)
+        # Клиппинг итоговой награды
+        total_reward = np.clip(total_reward, -20.0, 20.0)
         self.reward_history.append(total_reward)
         return total_reward
     
@@ -469,36 +469,35 @@ def create_aggressive_reward_scheme() -> CompositeRewardScheme:
 
 def create_optimized_reward_scheme() -> CompositeRewardScheme:
     """
-    Створити збалансовану схему винагород з різноманітними значеннями:
-    - Основна винагорода за прибуток з підвищеним вагом
-    - Гнучкий контроль ризиків
-    - Стимулювання якісних торгових рішень
-    - Запобігання екстремальним просадкам
-    - Збалансований діапазон винагород для кращого навчання
+    Создать высокопроизводительную схему наград для прибыльной торговли на 15мин:
+    - Строгий фокус на прибыльность (win rate >55%)
+    - Жесткий контроль рисков и просадок (<15%)
+    - Предотвращение оверфиттинга
+    - Оптимизация для частых сделок
     """
     schemes = [
-        # Основна винагорода за прибуток (підвищений вес)
-        BalancedProfitReward(weight=3.0, risk_adjustment=True),
+        # Сильная награда за чистую прибыль
+        BalancedProfitReward(weight=1.0, risk_adjustment=True),
         
-        # Помірний контроль просадки з більшим вагом
-        MaxDrawdownPenalty(weight=-4.0, max_allowed_drawdown=0.20),
+        # Жесткий контроль просадки для защиты капитала
+        MaxDrawdownPenalty(weight=-3.0, max_allowed_drawdown=0.15),
         
-        # Винагорода за якість торгівлі
-        EnhancedTradeQualityReward(weight=2.0, target_win_rate=0.55, min_trades=15),
+        # Высокие требования к win rate для прибыльности  
+        EnhancedTradeQualityReward(weight=1.2, target_win_rate=0.55, min_trades=30),
         
-        # Штраф за серії збиткових угод
-        LosingStreakPenalty(weight=-2.5, max_losing_streak=6),
+        # Строгий контроль убыточных серий
+        LosingStreakPenalty(weight=-2.0, max_losing_streak=5),
         
-        # Контроль часу утримання позиції
-        PositionHoldingPenalty(weight=-1.5, max_holding_steps=150),
+        # Оптимизация для 15мин таймфрейма (быстрые позиции)
+        PositionHoldingPenalty(weight=-1.0, max_holding_steps=48),  # 12 часов максимум
         
-        # Стимулювання торгової активності
-        TradingActivityReward(weight=1.0, min_trade_frequency=0.015),
+        # Баланс между активностью и качеством
+        TradingActivityReward(weight=0.2, min_trade_frequency=0.02),
         
-        # Додаткові метрики зі збільшеними вагами
-        SharpeRatioReward(weight=1.5, window=40),
-        VolatilityPenalty(weight=-0.8),
-        ConsistencyReward(weight=1.2, window=25)
+        # Дополнительные метрики для стабильности
+        SharpeRatioReward(weight=0.3, window=96),  # 24 часа на 15мин
+        VolatilityPenalty(weight=-0.15),
+        ConsistencyReward(weight=0.25, window=96)
     ]
     return CompositeRewardScheme(schemes)
 

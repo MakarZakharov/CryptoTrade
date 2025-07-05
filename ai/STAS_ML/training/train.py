@@ -1,5 +1,5 @@
 """
-Основной скрипт для обучения STAS_ML-агента.
+Основной скрипт для обучения DRL-агента.
 """
 
 import os
@@ -17,26 +17,41 @@ sys.path.insert(0, project_root)
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback, CallbackList
 from stable_baselines3.common.monitor import Monitor
 
-from CryptoTrade.ai.STAS_ML.config.trading_config import TradingConfig
-from CryptoTrade.ai.STAS_ML.environment.trading_env import TradingEnv
-from CryptoTrade.ai.STAS_ML.agents.dqn_agent import DQNAgent
-from CryptoTrade.ai.STAS_ML.agents.ppo_agent import PPOAgent
-from CryptoTrade.ai.STAS_ML.training.callbacks import TradingCallback, TensorboardCallback
+from CryptoTrade.ai.DRL.config.trading_config import TradingConfig
+from CryptoTrade.ai.DRL.environment.trading_env import TradingEnv
+from CryptoTrade.ai.DRL.agents.dqn_agent import DQNAgent
+from CryptoTrade.ai.DRL.agents.ppo_agent import PPOAgent
+from CryptoTrade.ai.DRL.training.callbacks import TradingCallback, TensorboardCallback
 
 
 class DRLTrainer:
-    """Класс для обучения STAS_ML агентов."""
+    """Класс для обучения DRL агентов."""
     
-    def __init__(self, config: TradingConfig, save_dir: str = "models", resume_training: bool = True):
+    def __init__(self, config: TradingConfig, save_dir: str = None, resume_training: bool = True, 
+                 custom_model_name: str = None):
         self.config = config
-        self.save_dir = save_dir
+        
+        # Используем CryptoTrade/ai/DRL/models как основную директорию
+        if save_dir is None:
+            self.save_dir = os.path.join("CryptoTrade", "ai", "DRL", "models")
+        else:
+            self.save_dir = save_dir
+            
         self.resume_training = resume_training
-        # Используем фиксированное имя без timestamp для постоянного обучения одной модели
-        self.experiment_name = f"{config.symbol}_{config.timeframe}_{config.reward_scheme}"
+        
+        # Позволяем пользователю указать собственное имя модели
+        if custom_model_name:
+            self.experiment_name = custom_model_name
+        else:
+            # Используем фиксированное имя без timestamp для постоянного обучения одной модели
+            self.experiment_name = f"{config.symbol}_{config.timeframe}_{config.reward_scheme}"
         
         # Создаем директории
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(f"logs/{self.experiment_name}", exist_ok=True)
+        
+        print(f"🏗️ Модель будет сохранена в: {os.path.join(self.save_dir, self.experiment_name)}")
+        print(f"📊 Логи будут сохранены в: logs/{self.experiment_name}")
         
     def prepare_environment(self, train_split: float = 0.8, validation_split: float = 0.1):
         """Подготовить среды для обучения и валидации."""
@@ -89,10 +104,6 @@ class DRLTrainer:
             f"{model_dir}/final_model",
             f"{model_dir}/best_model"
         ]
-        
-        # Проверяем совместимость observation space перед загрузкой модели
-        test_env = TradingEnv(self.config)
-        current_obs_shape = test_env.observation_space.shape
         
         # Ищем существующую модель
         existing_model_path = None
@@ -152,33 +163,15 @@ class DRLTrainer:
         
         if existing_model_path:
             print(f"🔄 Найдена существующая модель: {existing_model_path}")
-            
-            # Проверяем совместимость observation space
+            print(f"📚 Пытаемся продолжить обучение с существующей модели...")
             try:
-                print(f"📊 Проверяем совместимость observation space...")
-                print(f"   Текущий: {current_obs_shape}")
-                
-                # Попытка загрузить модель для проверки
-                temp_agent = type(self.agent)(self.config)
-                temp_agent.create_model(test_env)
-                temp_agent.load(existing_model_path, test_env)
-                
-                print(f"✅ Observation space совместим, продолжаем обучение...")
                 self.agent.load(existing_model_path, self.train_env)
                 print(f"✅ Модель {agent_type} загружена для продолжения обучения")
-                
             except Exception as e:
-                if "Observation spaces do not match" in str(e):
-                    print(f"⚠️ Observation space не совместим с существующей моделью")
-                    print(f"   Ошибка: {e}")
-                    print(f"🆕 Создаем новую модель...")
-                    self.agent.create_model(self.train_env, model_config)
-                    print(f"✅ Создана новая модель {agent_type} из-за несовместимости")
-                else:
-                    print(f"❌ Ошибка загрузки модели: {e}")
-                    print(f"🆕 Создаем новую модель...")
-                    self.agent.create_model(self.train_env, model_config)
-                    print(f"✅ Создана новая модель {agent_type}")
+                print(f"⚠️ Ошибка загрузки модели (возможно изменилась размерность данных): {e}")
+                print(f"🆕 Создаем новую модель вместо загрузки несовместимой...")
+                self.agent.create_model(self.train_env, model_config)
+                print(f"✅ Создана новая модель {agent_type}")
         else:
             # Создаем новую модель
             self.agent.create_model(self.train_env, model_config)
@@ -190,43 +183,31 @@ class DRLTrainer:
         
         return self.agent
     
-    def create_callbacks(self, eval_freq: int = 5000, save_freq: int = 10000):
-        """Створити покращені callbacks для навчання."""
+    def create_callbacks(self, eval_freq: int = 10000, save_freq: int = 20000):
+        """Создать callbacks для обучения."""
         callbacks = []
         
-        # Покращений callback для оцінки моделі з частішою перевіркою
+        # Callback для оценки модели
         eval_callback = EvalCallback(
             self.val_env,
             best_model_save_path=f"{self.save_dir}/{self.experiment_name}",
             log_path=f"logs/{self.experiment_name}",
-            eval_freq=eval_freq,  # Частіше оцінювання
-            n_eval_episodes=10,  # Більше епізодів для надійної оцінки
+            eval_freq=eval_freq,
             deterministic=True,
             render=False,
-            verbose=1,
-            warn=False
+            verbose=1
         )
         callbacks.append(eval_callback)
         
-        # Частіші checkpoint-и
+        # Checkpoint callback
         checkpoint_callback = CheckpointCallback(
             save_freq=save_freq,
             save_path=f"{self.save_dir}/{self.experiment_name}/checkpoints",
-            name_prefix="model",
-            verbose=1
+            name_prefix="model"
         )
         callbacks.append(checkpoint_callback)
         
-        # Ранній зупин для запобігання перенавчанню
-        from .callbacks import EarlyStoppingCallback
-        early_stopping_callback = EarlyStoppingCallback(
-            patience=30,  # Зупинка після 30 оцінок без покращення
-            min_improvement=0.005,  # Мінімальне покращення 0.5%
-            verbose=1
-        )
-        callbacks.append(early_stopping_callback)
-        
-        # Кастомні callbacks
+        # Кастомные callbacks
         trading_callback = TradingCallback(
             log_dir=f"logs/{self.experiment_name}",
             experiment_name=self.experiment_name
@@ -239,18 +220,10 @@ class DRLTrainer:
         )
         callbacks.append(tensorboard_callback)
         
-        # Моніторинг продуктивності
-        from .callbacks import PerformanceMonitorCallback
-        performance_callback = PerformanceMonitorCallback(
-            log_freq=5000,
-            verbose=1
-        )
-        callbacks.append(performance_callback)
-        
         return CallbackList(callbacks)
     
-    def train(self, total_timesteps: int = 500000, eval_freq: int = 5000, 
-              save_freq: int = 10000, agent_type: str = "PPO", 
+    def train(self, total_timesteps: int = 500000, eval_freq: int = 10000, 
+              save_freq: int = 20000, agent_type: str = "PPO", 
               model_config: Optional[Dict] = None):
         """Обучить агента."""
         
@@ -327,7 +300,7 @@ def quick_train(symbol: str = "BTCUSDT", timeframe: str = "1d",
         symbol=symbol,
         timeframe=timeframe,
         reward_scheme=reward_scheme,
-        initial_balance=10000.0
+        initial_balance=100.0
     )
     
     trainer = DRLTrainer(config)
@@ -341,7 +314,7 @@ if __name__ == "__main__":
     # Пример использования
     import argparse
     
-    parser = argparse.ArgumentParser(description='Обучение STAS_ML агента для торговли')
+    parser = argparse.ArgumentParser(description='Обучение DRL агента для торговли')
     parser.add_argument('--symbol', default='BTCUSDT', help='Торговая пара')
     parser.add_argument('--timeframe', default='1d', help='Таймфрейм')
     parser.add_argument('--agent', default='PPO', choices=['PPO', 'DQN'], help='Тип агента')

@@ -11,24 +11,127 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 sys.path.insert(0, project_root)
 
 try:
-    from CryptoTrade.ai.ML1.market_analysis.data.features.technical_indicators import TechnicalIndicators
-    from CryptoTrade.ai.ML1.market_analysis.data.fetchers.csv_fetcher import CSVFetcher
-    from CryptoTrade.ai.STAS_ML.config.trading_config import TradingConfig
-    from CryptoTrade.ai.STAS_ML.environment.reward_schemes import (
+    from CryptoTrade.ai.DRL.config.trading_config import TradingConfig
+    from CryptoTrade.ai.DRL.environment.reward_schemes import (
         create_default_reward_scheme, create_conservative_reward_scheme, 
         create_aggressive_reward_scheme, create_optimized_reward_scheme, CompositeRewardScheme
     )
-    from CryptoTrade.ai.STAS_ML.utils.metrics import MetricsCalculator, TradingMetrics
 except ImportError as e:
     print(f"Ошибка импорта: {e}")
     print("Убедитесь, что все модули находятся в правильных директориях")
     raise
 
 
+# Placeholder implementations
+class TechnicalIndicators:
+    """Placeholder for technical indicators."""
+    
+    @staticmethod
+    def add_all_indicators(data: pd.DataFrame, include: List[str] = None) -> pd.DataFrame:
+        """Add basic technical indicators to the data."""
+        df = data.copy()
+        
+        # Simple Moving Averages
+        df['sma_5'] = df['close'].rolling(5).mean()
+        df['sma_20'] = df['close'].rolling(20).mean()
+        df['sma_50'] = df['close'].rolling(50).mean()
+        
+        # Exponential Moving Averages
+        df['ema_5'] = df['close'].ewm(span=5).mean()
+        df['ema_20'] = df['close'].ewm(span=20).mean()
+        df['ema_50'] = df['close'].ewm(span=50).mean()
+        
+        # RSI
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['rsi_14'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        ema_12 = df['close'].ewm(span=12).mean()
+        ema_26 = df['close'].ewm(span=26).mean()
+        df['macd'] = ema_12 - ema_26
+        df['macd_signal'] = df['macd'].ewm(span=9).mean()
+        df['macd_histogram'] = df['macd'] - df['macd_signal']
+        
+        # Bollinger Bands
+        df['bb_middle'] = df['close'].rolling(20).mean()
+        bb_std = df['close'].rolling(20).std()
+        df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
+        df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+        
+        # ATR
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        df['atr_14'] = true_range.rolling(14).mean()
+        
+        return df
+
+
+class CSVFetcher:
+    """Placeholder for CSV data fetcher."""
+    
+    def __init__(self, symbol: str, interval: str, base_path: str):
+        self.symbol = symbol
+        self.interval = interval
+        self.base_path = base_path
+    
+    def fetch_data(self, start_date: str = None, end_date: str = None) -> pd.DataFrame:
+        """Fetch data from CSV file."""
+        try:
+            # Construct file path
+            file_path = os.path.join(self.base_path, self.symbol, self.interval, '2018_01_01-now.csv')
+            print(f"Attempting to load data from: {file_path}")
+            
+            if not os.path.exists(file_path):
+                print(f"Data file not found: {file_path}")
+                return pd.DataFrame()
+            
+            # Read CSV file
+            df = pd.read_csv(file_path)
+            
+            # Ensure proper column names
+            expected_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            if 'date' in df.columns:
+                df = df.rename(columns={'date': 'timestamp'})
+            
+            # Convert timestamp to datetime
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df = df.set_index('timestamp')
+            
+            # Ensure we have OHLCV data
+            required_cols = ['open', 'high', 'low', 'close', 'volume']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                print(f"Missing columns in data: {missing_cols}")
+                return pd.DataFrame()
+            
+            # Convert to numeric
+            for col in required_cols:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Filter by date range if specified
+            if start_date and not df.empty:
+                df = df[df.index >= start_date]
+            if end_date and not df.empty:
+                df = df[df.index <= end_date]
+            
+            print(f"Loaded {len(df)} rows of data for {self.symbol}")
+            return df
+            
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            return pd.DataFrame()
+
+
 
 class TradingEnv(gym.Env):
     """
-    Реалистичная среда для обучения STAS_ML-агента торговле криптовалютными парами.
+    Реалистичная среда для обучения DRL-агента торговле криптовалютными парами.
     Поддерживает проскальзывание, комиссии, спред, частичное исполнение и моделирование ликвидности.
     """
     metadata = {'render.modes': ['human']}
@@ -68,9 +171,6 @@ class TradingEnv(gym.Env):
         
         # Инициализация метрик
         self.reset_metrics()
-        
-        # Расширенные метрики
-        self.comprehensive_metrics = None
 
     def _load_data(self) -> pd.DataFrame:
         """Загрузка данных с техническими индикаторами."""
@@ -164,7 +264,7 @@ class TradingEnv(gym.Env):
             self.reward_scheme = create_optimized_reward_scheme()
         elif self.config.reward_scheme == 'custom' and self.config.custom_reward_weights:
             # Создаем кастомную схему на основе весов
-            from CryptoTrade.ai.STAS_ML.environment.reward_schemes import (
+            from ai.DRL.environment.reward_schemes import (
                 ProfitReward, DrawdownPenalty, SharpeRatioReward, 
                 TradeQualityReward, VolatilityPenalty, ConsistencyReward
             )
@@ -262,7 +362,11 @@ class TradingEnv(gym.Env):
             crypto_amount_to_sell = self.crypto_balance * abs(trade_percentage)
             usdt_amount = crypto_amount_to_sell * effective_price
         
-        # Проверяем минимальную сумму сделки
+        # Проверяем минимальную сумму сделки и фильтруем микро-действия
+        min_action_threshold = 0.05  # 5% минимальное действие для предотвращения шума
+        if abs(trade_percentage) < min_action_threshold:
+            return 0.0
+            
         if abs(usdt_amount) < self.config.min_trade_amount:
             return 0.0
         
@@ -445,17 +549,11 @@ class TradingEnv(gym.Env):
         """Получить информацию о состоянии среды."""
         portfolio_value = self._get_portfolio_value()
         
-        # Рассчитываем базовые метрики
+        # Рассчитываем метрики
         total_return = (portfolio_value - self.initial_balance) / self.initial_balance
         max_drawdown = max(self.drawdown_history) if self.drawdown_history else 0.0
         avg_drawdown = np.mean(self.drawdown_history) if self.drawdown_history else 0.0
         win_rate = self.profitable_trades / max(self.total_trades, 1)
-        
-        # Рассчитываем комплексные метрики если есть достаточно данных
-        if len(self.portfolio_history) > 1:
-            self.comprehensive_metrics = MetricsCalculator.calculate_comprehensive_metrics(
-                self.portfolio_history, self.trade_history, self.initial_balance
-            )
         
         # Месячная прибыль (приблизительно)
         if len(self.portfolio_history) > 30:
@@ -470,38 +568,20 @@ class TradingEnv(gym.Env):
         else:
             avg_monthly_return = 0.0
         
-        info = {
+        return {
             'portfolio_value': portfolio_value,
             'portfolio_history': self.portfolio_history,
             'balance': self.balance,
             'crypto_balance': self.crypto_balance,
             'total_return': total_return,
-            'total_return_pct': total_return * 100,
-            'total_return_usd': portfolio_value - self.initial_balance,
             'max_drawdown': max_drawdown,
-            'max_drawdown_pct': max_drawdown * 100,
-            'max_drawdown_usd': max_drawdown * max(self.portfolio_history) if self.portfolio_history else 0,
             'avg_drawdown': avg_drawdown,
             'avg_monthly_return': avg_monthly_return,
             'total_trades': self.total_trades,
             'win_rate': win_rate,
-            'win_rate_pct': win_rate * 100,
             'current_price': self.data.iloc[self.current_step]['close'],
-            'step': self.current_step,
-            'trade_history': self.trade_history,
-            'initial_balance': self.initial_balance,
-            'final_balance': portfolio_value
+            'step': self.current_step
         }
-        
-        # Добавляем комплексные метрики если доступны
-        if self.comprehensive_metrics:
-            info['comprehensive_metrics'] = self.comprehensive_metrics
-            info['sharpe_ratio'] = self.comprehensive_metrics.sharpe_ratio
-            info['calmar_ratio'] = self.comprehensive_metrics.calmar_ratio
-            info['profit_factor'] = self.comprehensive_metrics.profit_factor
-            info['recovery_factor'] = self.comprehensive_metrics.recovery_factor
-        
-        return info
 
     def render(self, mode='human'):
         """Визуализация состояния среды."""
