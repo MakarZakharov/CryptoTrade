@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import torch
 from stable_baselines3 import DQN
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
@@ -10,6 +11,19 @@ class DQNAgent(BaseAgent):
         super().__init__(config)
         self.model = None
         self.vec_env = None
+        self.device = self._get_device()
+        
+    def _get_device(self):
+        """Определить доступное устройство (GPU или CPU)."""
+        if torch.cuda.is_available():
+            device = "cuda"
+            gpu_name = torch.cuda.get_device_name(0)
+            print(f"🚀 Используется GPU: {gpu_name}")
+            print(f"💾 Доступная видеопамять: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        else:
+            device = "cpu"
+            print("🔧 GPU недоступен, используется CPU")
+        return device
         
     def create_model(self, env, model_config=None):
         """Создать модель DQN."""
@@ -39,6 +53,7 @@ class DQNAgent(BaseAgent):
         self.model = DQN(
             "MlpPolicy",
             self.vec_env,
+            device=self.device,
             **default_config
         )
         

@@ -207,6 +207,20 @@ def main():
     if not check_dependencies():
         return
     
+    # Спрашиваем у пользователя название модели
+    print("🏷️ Настройка имени модели:")
+    print("   1. Автоматическое имя (BTCUSDT_1d_optimized)")
+    print("   2. Пользовательское имя")
+    
+    custom_name = None
+    choice = input("Выберите (1-2) или Enter для автоматического: ").strip()
+    
+    if choice == "2":
+        custom_name = input("Введите имя модели (например, my_best_model): ").strip()
+        if not custom_name:
+            print("⚠️ Пустое имя, используем автоматическое")
+            custom_name = None
+    
     # Автоматическая конфигурация (BTCUSDT, 1d, PPO, optimized)
     config = TradingConfig(
         symbol='BTCUSDT',
@@ -224,24 +238,26 @@ def main():
     print(f"   Агент: {agent_type}")
     print(f"   Шагов: {timesteps:,}")
     print(f"   Схема наград: {config.reward_scheme}")
+    if custom_name:
+        print(f"   Имя модели: {custom_name}")
     print(f"💡 Мониторинг: tensorboard --logdir logs")
     print(f"💡 Для остановки: Ctrl+C")
     print("-" * 60)
     
     try:
-        trainer = DRLTrainer(config, resume_training=True)
+        trainer = DRLTrainer(config, resume_training=True, custom_model_name=custom_name)
         agent = trainer.train(
             total_timesteps=timesteps,
             agent_type=agent_type
         )
         
         print(f"\n✅ Обучение завершено успешно!")
-        print(f"📁 Модель сохранена в: models/{trainer.experiment_name}")
+        print(f"📁 Модель сохранена в: {trainer.save_dir}/{trainer.experiment_name}")
         print(f"📊 Логи в: logs/{trainer.experiment_name}")
         
         # Автоматическая оценка
         print("\n🔍 Запуск автоматической оценки...")
-        model_path = f"models/{trainer.experiment_name}/final_model"
+        model_path = f"{trainer.save_dir}/{trainer.experiment_name}/final_model"
         try:
             evaluator, results, report = quick_evaluate(
                 model_path=model_path,

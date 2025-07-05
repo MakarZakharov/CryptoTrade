@@ -42,10 +42,237 @@ class DRLEvaluator:
         else:
             raise ValueError(f"Неподдерживаемый тип агента: {self.agent_type}")
         
+        # Проверяем существование модели и автоматически находим правильный путь
+        found_model_path = self._find_model_path()
+        if not found_model_path:
+            raise FileNotFoundError(f"Модель не найдена: {self.model_path}")
+        
         # Загружаем модель
-        self.agent.load(self.model_path, env)
-        print(f"✅ Агент {self.agent_type} загружен из {self.model_path}")
+        self.agent.load(found_model_path, env)
+        model_path = found_model_path
+        print(f"✅ Агент {self.agent_type} загружен из {model_path}")
         return self.agent
+    
+    def get_available_models(self):
+        """Получить список всех доступных моделей."""
+        import glob
+        
+        models_dir = os.path.join("CryptoTrade", "ai", "DRL", "models")
+        available_models = []
+        
+        if not os.path.exists(models_dir):
+            print(f"❌ Директория моделей не найдена: {models_dir}")
+            return available_models
+        
+        print(f"🔍 Поиск моделей в: {models_dir}")
+        
+        # Ищем все директории с моделями
+        for item in os.listdir(models_dir):
+            model_dir = os.path.join(models_dir, item)
+            if os.path.isdir(model_dir):
+                model_info = {
+                    'name': item,
+                    'path': model_dir,
+                    'models': [],
+                    'checkpoints': []
+                }
+                
+                # Ищем основные модели
+                for model_name in ['best_model.zip', 'final_model.zip']:
+                    model_path = os.path.join(model_dir, model_name)
+                    if os.path.exists(model_path):
+                        model_info['models'].append({
+                            'type': model_name.replace('.zip', ''),
+                            'path': model_path,
+                            'size': os.path.getsize(model_path),
+                            'modified': os.path.getmtime(model_path)
+                        })
+                
+                # Ищем checkpoints
+                checkpoint_dir = os.path.join(model_dir, 'checkpoints')
+                if os.path.exists(checkpoint_dir):
+                    checkpoint_files = glob.glob(f"{checkpoint_dir}/*.zip")
+                    for checkpoint_file in sorted(checkpoint_files):
+                        model_info['checkpoints'].append({
+                            'type': 'checkpoint',
+                            'name': os.path.basename(checkpoint_file),
+                            'path': checkpoint_file,
+                            'size': os.path.getsize(checkpoint_file),
+                            'modified': os.path.getmtime(checkpoint_file)
+                        })
+                
+                if model_info['models'] or model_info['checkpoints']:
+                    available_models.append(model_info)
+        
+        return available_models
+    
+    def validate_model_compatibility(self, model_path: str) -> bool:
+        """Проверить совместимость модели с текущей конфигурацией."""
+        try:
+            # Создаем временную среду для проверки
+            temp_env = TradingEnv(self.config)
+            
+            # Пытаемся загрузить модель
+            if self.agent_type.upper() == "DQN":
+                temp_agent = DQNAgent(self.config)
+            elif self.agent_type.upper() == "PPO":
+                temp_agent = PPOAgent(self.config)
+            else:
+                return False
+            
+            # Проверяем загрузку без создания модели
+            from stable_baselines3 import PPO, DQN
+            
+            if self.agent_type.upper() == "PPO":
+                model = PPO.load(model_path, env=None)
+                # Проверяем совместимость observation space
+                expected_shape = temp_env.observation_space.shape
+                if hasattr(model, 'observation_space'):
+                    actual_shape = model.observation_space.shape
+                    return expected_shape == actual_shape
+            elif self.agent_type.upper() == "DQN":
+                model = DQN.load(model_path, env=None)
+                expected_shape = temp_env.observation_space.shape
+                if hasattr(model, 'observation_space'):
+                    actual_shape = model.observation_space.shape
+                    return expected_shape == actual_shape
+            
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Модель несовместима: {e}")
+            return False
+    
+    def interactive_model_selection(self):
+        """Интерактивный выбор модели."""
+        available_models = self.get_available_models()
+        
+        if not available_models:
+            print("❌ Модели не найдены!")
+            print("💡 Сначала обучите модель с помощью mvp_train.py")
+            return None
+        
+        print(f"\n📋 Найдено {len(available_models)} директорий с моделями:")
+        print("=" * 80)
+        
+        # Показываем все доступные модели
+        model_options = []
+        option_counter = 1
+        
+        for model_info in available_models:
+            print(f"\n📁 {model_info['name']}:")
+            
+            # Основные модели (приоритет: best_model > final_model)
+            sorted_models = sorted(model_info['models'], 
+                                 key=lambda x: 0 if x['type'] == 'best_model' else 1)
+            
+            for model in sorted_models:
+                size_mb = model['size'] / (1024 * 1024)
+                modified_time = pd.to_datetime(model['modified'], unit='s').strftime('%Y-%m-%d %H:%M')
+                
+                print(f"  {option_counter}. {model['type']}.zip ({size_mb:.1f} MB, {modified_time})")
+                model_options.append({
+                    'index': option_counter,
+                    'path': model['path'],
+                    'type': model['type'],
+                    'dir_name': model_info['name']
+                })
+                option_counter += 1
+            
+            # Показываем последние 3 checkpoint'а
+            if model_info['checkpoints']:
+                recent_checkpoints = sorted(model_info['checkpoints'], 
+                                          key=lambda x: x['modified'], reverse=True)[:3]
+                
+                print(f"  📊 Последние checkpoints:")
+                for checkpoint in recent_checkpoints:
+                    size_mb = checkpoint['size'] / (1024 * 1024)
+                    modified_time = pd.to_datetime(checkpoint['modified'], unit='s').strftime('%Y-%m-%d %H:%M')
+                    
+                    print(f"    {option_counter}. {checkpoint['name']} ({size_mb:.1f} MB, {modified_time})")
+                    model_options.append({
+                        'index': option_counter,
+                        'path': checkpoint['path'],
+                        'type': 'checkpoint',
+                        'dir_name': model_info['name']
+                    })
+                    option_counter += 1
+        
+        print("\n" + "=" * 80)
+        
+        # Интерактивный выбор
+        while True:
+            try:
+                choice = input(f"\nВыберите модель для оценки (1-{len(model_options)}) или 'q' для выхода: ").strip()
+                
+                if choice.lower() == 'q':
+                    print("❌ Оценка отменена пользователем")
+                    return None
+                
+                choice_idx = int(choice)
+                if 1 <= choice_idx <= len(model_options):
+                    selected_model = model_options[choice_idx - 1]
+                    model_path = selected_model['path']
+                    
+                    print(f"\n✅ Выбрана модель: {selected_model['type']} из {selected_model['dir_name']}")
+                    print(f"📁 Путь: {model_path}")
+                    
+                    # Проверяем совместимость
+                    print("🔍 Проверка совместимости модели...")
+                    if self.validate_model_compatibility(model_path):
+                        print("✅ Модель совместима с текущей конфигурацией")
+                        return model_path
+                    else:
+                        print("❌ Модель несовместима с текущей конфигурацией среды!")
+                        print("💡 Возможные причины:")
+                        print("  - Изменилась размерность данных")
+                        print("  - Другая конфигурация технических индикаторов")
+                        print("  - Несовместимые параметры среды")
+                        
+                        retry = input("Попробовать другую модель? (y/n): ").strip().lower()
+                        if retry not in ['y', 'yes', 'да']:
+                            print("🔴 Оценка остановлена - нет совместимых моделей")
+                            return None
+                        continue
+                    
+                else:
+                    print(f"❌ Неверный выбор! Введите число от 1 до {len(model_options)}")
+                    
+            except ValueError:
+                print("❌ Введите корректное число!")
+            except KeyboardInterrupt:
+                print("\n❌ Оценка отменена пользователем")
+                return None
+    
+    def _find_model_path(self):
+        """Найти правильный путь к модели."""
+        # Если путь абсолютный и существует, используем его
+        if os.path.isabs(self.model_path) and os.path.exists(self.model_path):
+            print(f"🔍 Использую абсолютный путь: {self.model_path}")
+            return self.model_path
+        
+        # Если путь относительный, ищем в CryptoTrade/ai/DRL/models/
+        models_dir = os.path.join("CryptoTrade", "ai", "DRL", "models")
+        
+        # Проверяем прямые пути
+        possible_paths = [
+            self.model_path,
+            f"{self.model_path}.zip",
+            os.path.join(models_dir, self.model_path),
+            os.path.join(models_dir, f"{self.model_path}.zip"),
+            os.path.join(models_dir, self.model_path, "best_model.zip"),
+            os.path.join(models_dir, self.model_path, "final_model.zip"),
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                print(f"🔍 Найдена модель: {path}")
+                return path
+        
+        # Если ничего не найдено, запускаем интерактивный выбор
+        print(f"🤖 Модель '{self.model_path}' не найдена автоматически")
+        print("🎯 Запуск интерактивного выбора модели...")
+        return self.interactive_model_selection()
     
     def evaluate_episodes(self, env: TradingEnv, num_episodes: int = 10, 
                          deterministic: bool = True) -> Dict:

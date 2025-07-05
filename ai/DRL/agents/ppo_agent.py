@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
@@ -10,25 +11,43 @@ class PPOAgent(BaseAgent):
         super().__init__(config)
         self.model = None
         self.vec_env = None
+        self.device = self._get_device()
+        
+    def _get_device(self):
+        """Определить доступное устройство (GPU или CPU)."""
+        if torch.cuda.is_available():
+            device = "cuda"
+            gpu_name = torch.cuda.get_device_name(0)
+            print(f"🚀 Используется GPU: {gpu_name}")
+            print(f"💾 Доступная видеопамять: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        else:
+            device = "cpu"
+            print("🔧 GPU недоступен, используется CPU")
+        return device
         
     def create_model(self, env, model_config=None):
         """Создать модель PPO."""
         # Оборачиваем среду
         self.vec_env = DummyVecEnv([lambda: env])
         
-        # Параметры модели по умолчанию
+        # Оптимизированные параметры для прибыльной торговли на 15мин
         default_config = {
-            'learning_rate': 3e-4,
-            'n_steps': 2048,
-            'batch_size': 64,
-            'n_epochs': 10,
-            'gamma': 0.99,
-            'gae_lambda': 0.95,
-            'clip_range': 0.2,
-            'ent_coef': 0.0,
-            'vf_coef': 0.5,
-            'max_grad_norm': 0.5,
-            'verbose': 1
+            'learning_rate': 1e-4,  # Более стабильное обучение
+            'n_steps': 1024,  # Меньше шагов для частых обновлений
+            'batch_size': 128,  # Больше размер батча для стабильности
+            'n_epochs': 4,  # Меньше эпох для предотвращения переобучения
+            'gamma': 0.995,  # Выше для важности будущих наград
+            'gae_lambda': 0.98,  # Выше для лучшей оценки преимуществ
+            'clip_range': 0.15,  # Более консервативная политика
+            'ent_coef': 0.01,  # Небольшое исследование для стабильности
+            'vf_coef': 0.25,  # Меньший вес функции ценности
+            'max_grad_norm': 0.3,  # Более строгий клиппинг градиентов
+            'verbose': 1,
+            # Дополнительные параметры для стабильности
+            'use_sde': False,  # Отключаем стохастическое исследование
+            'sde_sample_freq': -1,
+            'target_kl': 0.01,  # Ограничиваем изменения политики
+            'normalize_advantage': True  # Нормализация преимуществ
         }
         
         if model_config:
@@ -38,7 +57,7 @@ class PPOAgent(BaseAgent):
         self.model = PPO(
             "MlpPolicy",
             self.vec_env,
-            device="cpu",  # Используем CPU для лучшей производительности с MlpPolicy
+            device=self.device,
             **default_config
         )
         

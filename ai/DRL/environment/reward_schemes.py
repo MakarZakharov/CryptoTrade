@@ -469,36 +469,35 @@ def create_aggressive_reward_scheme() -> CompositeRewardScheme:
 
 def create_optimized_reward_scheme() -> CompositeRewardScheme:
     """
-    Создать стабилизированную схему наград с контролем экстремальных значений:
-    - Сбалансированная прибыль при контроле рисков
-    - Постепенное улучшение win rate
-    - Умеренные штрафы за убытки
-    - Стимулирование торговой активности
-    - Клиппинг наград для стабильности
+    Создать высокопроизводительную схему наград для прибыльной торговли на 15мин:
+    - Строгий фокус на прибыльность (win rate >55%)
+    - Жесткий контроль рисков и просадок (<15%)
+    - Предотвращение оверфиттинга
+    - Оптимизация для частых сделок
     """
     schemes = [
-        # Основная награда за прибыль (снижен вес)
-        BalancedProfitReward(weight=0.5, risk_adjustment=True),
+        # Сильная награда за чистую прибыль
+        BalancedProfitReward(weight=1.0, risk_adjustment=True),
         
-        # Умеренный контроль просадки 
-        MaxDrawdownPenalty(weight=-1.5, max_allowed_drawdown=0.25),
+        # Жесткий контроль просадки для защиты капитала
+        MaxDrawdownPenalty(weight=-3.0, max_allowed_drawdown=0.15),
         
-        # Более мягкие требования к win rate
-        EnhancedTradeQualityReward(weight=0.3, target_win_rate=0.45, min_trades=20),
+        # Высокие требования к win rate для прибыльности  
+        EnhancedTradeQualityReward(weight=1.2, target_win_rate=0.55, min_trades=30),
         
-        # Мягкий контроль серии убыточных сделок
-        LosingStreakPenalty(weight=-0.8, max_losing_streak=8),
+        # Строгий контроль убыточных серий
+        LosingStreakPenalty(weight=-2.0, max_losing_streak=5),
         
-        # Умеренный контроль времени держания позиции
-        PositionHoldingPenalty(weight=-0.5, max_holding_steps=200),
+        # Оптимизация для 15мин таймфрейма (быстрые позиции)
+        PositionHoldingPenalty(weight=-1.0, max_holding_steps=48),  # 12 часов максимум
         
-        # Стимулирование торговой активности (предотвращает стратегию "ничего не делать")
-        TradingActivityReward(weight=0.3, min_trade_frequency=0.01),
+        # Баланс между активностью и качеством
+        TradingActivityReward(weight=0.2, min_trade_frequency=0.02),
         
-        # Дополнительные метрики со сниженными весами
-        SharpeRatioReward(weight=0.2, window=50),
-        VolatilityPenalty(weight=-0.1),
-        ConsistencyReward(weight=0.15, window=30)
+        # Дополнительные метрики для стабильности
+        SharpeRatioReward(weight=0.3, window=96),  # 24 часа на 15мин
+        VolatilityPenalty(weight=-0.15),
+        ConsistencyReward(weight=0.25, window=96)
     ]
     return CompositeRewardScheme(schemes)
 

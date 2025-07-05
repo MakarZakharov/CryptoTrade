@@ -27,16 +27,31 @@ from CryptoTrade.ai.DRL.training.callbacks import TradingCallback, TensorboardCa
 class DRLTrainer:
     """Класс для обучения DRL агентов."""
     
-    def __init__(self, config: TradingConfig, save_dir: str = "models", resume_training: bool = True):
+    def __init__(self, config: TradingConfig, save_dir: str = None, resume_training: bool = True, 
+                 custom_model_name: str = None):
         self.config = config
-        self.save_dir = save_dir
+        
+        # Используем CryptoTrade/ai/DRL/models как основную директорию
+        if save_dir is None:
+            self.save_dir = os.path.join("CryptoTrade", "ai", "DRL", "models")
+        else:
+            self.save_dir = save_dir
+            
         self.resume_training = resume_training
-        # Используем фиксированное имя без timestamp для постоянного обучения одной модели
-        self.experiment_name = f"{config.symbol}_{config.timeframe}_{config.reward_scheme}"
+        
+        # Позволяем пользователю указать собственное имя модели
+        if custom_model_name:
+            self.experiment_name = custom_model_name
+        else:
+            # Используем фиксированное имя без timestamp для постоянного обучения одной модели
+            self.experiment_name = f"{config.symbol}_{config.timeframe}_{config.reward_scheme}"
         
         # Создаем директории
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(f"logs/{self.experiment_name}", exist_ok=True)
+        
+        print(f"🏗️ Модель будет сохранена в: {os.path.join(self.save_dir, self.experiment_name)}")
+        print(f"📊 Логи будут сохранены в: logs/{self.experiment_name}")
         
     def prepare_environment(self, train_split: float = 0.8, validation_split: float = 0.1):
         """Подготовить среды для обучения и валидации."""
@@ -148,9 +163,15 @@ class DRLTrainer:
         
         if existing_model_path:
             print(f"🔄 Найдена существующая модель: {existing_model_path}")
-            print(f"📚 Продолжаем обучение с существующей модели...")
-            self.agent.load(existing_model_path, self.train_env)
-            print(f"✅ Модель {agent_type} загружена для продолжения обучения")
+            print(f"📚 Пытаемся продолжить обучение с существующей модели...")
+            try:
+                self.agent.load(existing_model_path, self.train_env)
+                print(f"✅ Модель {agent_type} загружена для продолжения обучения")
+            except Exception as e:
+                print(f"⚠️ Ошибка загрузки модели (возможно изменилась размерность данных): {e}")
+                print(f"🆕 Создаем новую модель вместо загрузки несовместимой...")
+                self.agent.create_model(self.train_env, model_config)
+                print(f"✅ Создана новая модель {agent_type}")
         else:
             # Создаем новую модель
             self.agent.create_model(self.train_env, model_config)
