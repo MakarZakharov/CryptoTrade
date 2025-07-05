@@ -1,0 +1,13 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1d",
+  "exchange": "binance",
+  "initial_balance": 10000.0,
+  "commission_rate": 0.001,
+  "slippage_rate": 0.0005,
+  "spread_rate": 0.0002,
+  "reward_scheme": "optimized",
+  "lookback_window": 50,
+  "experiment_name": "BTCUSDT_1d_optimized",
+  "created_at": "2025-07-05T21:09:07.063500"
+}
