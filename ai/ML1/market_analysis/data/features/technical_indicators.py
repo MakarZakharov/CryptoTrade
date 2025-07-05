@@ -53,7 +53,7 @@ class TechnicalIndicators:
             result = indicator_func(result)
         
         # Fill NaN values
-        result = result.fillna(method='bfill').fillna(method='ffill').fillna(0)
+        result = result.bfill().ffill().fillna(0)
         
         return result
     

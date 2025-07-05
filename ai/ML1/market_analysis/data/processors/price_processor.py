@@ -7,8 +7,8 @@ import numpy as np
 from typing import Tuple, Any
 from sklearn.preprocessing import MinMaxScaler
 
-from market_analysis.data.processors.base_processor import BaseProcessor
-from market_analysis.config import DEFAULT_TRAIN_SPLIT, DEFAULT_VAL_SPLIT
+from ai.ML1.market_analysis.data.processors.base_processor import BaseProcessor
+from ai.ML1.market_analysis.config import DEFAULT_TRAIN_SPLIT, DEFAULT_VAL_SPLIT
 
 
 class PriceProcessor(BaseProcessor):

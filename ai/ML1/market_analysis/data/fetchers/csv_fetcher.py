@@ -7,7 +7,7 @@ from typing import Optional, Union
 from datetime import datetime
 import os
 
-from market_analysis.data.fetchers.base_fetcher import BaseFetcher
+from ai.ML1.market_analysis.data.fetchers.base_fetcher import BaseFetcher
 
 
 class CSVFetcher(BaseFetcher):
@@ -120,8 +120,9 @@ class CSVFetcher(BaseFetcher):
         interval = interval or self.interval
         
         # Handle different directory structures
-        # Try different possible paths
+        # Try different possible paths including the actual structure used
         possible_paths = [
+            os.path.join(self.base_path, symbol, interval, "2018_01_01-now.csv"),
             os.path.join(self.base_path, f"{symbol}_{interval}.csv"),
             os.path.join(self.base_path, symbol, f"{interval}.csv"),
             os.path.join(self.base_path, interval, f"{symbol}.csv")
