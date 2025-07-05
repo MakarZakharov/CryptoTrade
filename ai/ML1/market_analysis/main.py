@@ -10,6 +10,7 @@ import sys
 from datetime import datetime
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
+from typing import Dict, Any
 
 # Add the CRYPTO_BOT directory to the Python path
 crypto_bot_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
@@ -22,6 +23,7 @@ from ai.ML1.market_analysis.data.processors.price_processor import PriceProcesso
 from ai.ML1.market_analysis.data.features.technical_indicators import TechnicalIndicators
 from ai.ML1.market_analysis.data.features.feature_selector import FeatureSelector
 from ai.ML1.market_analysis.models.model_factory import ModelFactory
+from ai.ML1.market_analysis.trading import SimpleStrategy
 
 
 def parse_arguments():
@@ -39,7 +41,7 @@ def parse_arguments():
                         help='End date for data (default: None/current)')
     parser.add_argument('--data_source', type=str, default='csv', choices=['binance', 'csv'],
                         help='Data source (default: csv)')
-    parser.add_argument('--csv_path', type=str, default='/home/newuser/CRYPTO_BOT/data/binance/BTCUSDC/1d/2018_01_01-now.csv',
+    parser.add_argument('--csv_path', type=str, default='/home/newuser/CRYPTO_BOT/data/binance/BTCUSDC/1d/2018_12_15-now.csv',
                         help='Path to CSV file if data_source is csv')
     
     # Preprocessing parameters
@@ -82,6 +84,16 @@ def parse_arguments():
                         help='Skip training and use loaded model only')
     parser.add_argument('--no_plot', action='store_true',
                         help='Skip plotting results')
+    
+    # Trading simulation parameters
+    parser.add_argument('--run_trading', action='store_true',
+                        help='Run trading simulation on test data')
+    parser.add_argument('--initial_investment', type=float, default=10000.0,
+                        help='Initial investment amount for trading simulation (default: 10000.0)')
+    parser.add_argument('--transaction_fee', type=float, default=0.001,
+                        help='Transaction fee as a percentage for trading simulation (default: 0.001 = 0.1%)')
+    parser.add_argument('--initial_balance', type=float, default=10000,
+                        help='Initial balance for backtesting (default: 10000)')
     
     return parser.parse_args()
 
@@ -323,6 +335,130 @@ def plot_results(evaluation_results, args):
     plt.show()
 
 
+def run_trading_simulation(evaluation_results, args) -> Dict[str, Any]:
+    """
+    Run trading simulation using the model predictions.
+    
+    Args:
+        evaluation_results: Dictionary containing evaluation results
+        args: Command line arguments
+        
+    Returns:
+        Dictionary containing trading performance metrics
+    """
+    if not args.run_trading:
+        return None
+    
+    print("\n🤖 Running trading simulation...")
+    
+    # Виправлено: використовуємо initial_balance і threshold
+    strategy = SimpleStrategy(
+        initial_balance=args.initial_balance,
+        transaction_fee=args.transaction_fee,
+        threshold=getattr(args, 'threshold', 0.0)
+    )
+    
+    actual_prices = evaluation_results['y_test'].flatten()
+    predicted_prices = evaluation_results['y_pred'].flatten()
+    
+    performance = strategy.backtest(actual_prices, predicted_prices)
+    
+    # Print performance metrics
+    print("\n=== TRADING PERFORMANCE ===")
+    print(f"Initial Balance: ${performance['initial_investment']:.2f}")
+    print(f"Final Balance:   ${performance['final_equity']:.2f}")
+    print(f"Absolute Return: ${performance['absolute_return']:.2f}")
+    print(f"Percentage Return: {performance['percentage_return']:.2f}%")
+    print(f"Number of Trades: {performance['num_trades']}")
+    if 'win_rate' in performance:
+        print(f"Win Rate: {performance['win_rate']:.2f}%")
+    
+    # Plot equity curve if not disabled
+    if not args.no_plot:
+        plot_path = strategy.plot_equity_curve(args.symbol, args.model_type)
+        if plot_path:
+            print(f"✅ Trading performance plot saved to {plot_path}")
+    
+    return performance
+
+
+def walk_forward_training(X, y, args, window_size=500, step_size=100):
+    """
+    Walk-forward training: навчає модель на відрізках історії та тестує на наступних.
+    """
+    from sklearn.preprocessing import MinMaxScaler
+    n_samples = X.shape[0]
+    results = []
+    for start in range(0, n_samples - window_size, step_size):
+        end = start + window_size
+        X_train, y_train = X[start:end], y[start:end]
+        X_test, y_test = X[end:end+step_size], y[end:end+step_size]
+        if len(X_test) == 0:
+            break
+        input_shape = (X_train.shape[1], X_train.shape[2])
+        scaler = MinMaxScaler()
+        y_train_scaled = scaler.fit_transform(y_train)
+        y_test_scaled = scaler.transform(y_test)
+        model = create_model(args, input_shape)
+        model = train_model(model, X_train, y_train_scaled, X_test, y_test_scaled, args)
+        eval_result = evaluate_model(model, X_test, y_test_scaled, scaler)
+        trading_performance = run_trading_simulation(eval_result, args)
+        if trading_performance:
+            initial = trading_performance['initial_investment']
+            final = trading_performance['final_equity']
+            percent = (final / initial) * 100 if initial else 0
+            # Просадка (max drawdown)
+            equity_curve = trading_performance.get('equity_curve')
+            if equity_curve is not None:
+                peak = equity_curve[0]
+                max_drawdown = 0
+                for x in equity_curve:
+                    if x > peak:
+                        peak = x
+                    drawdown = (peak - x) / peak
+                    if drawdown > max_drawdown:
+                        max_drawdown = drawdown
+                max_drawdown_pct = max_drawdown * 100
+            else:
+                max_drawdown_pct = None
+            print(f"Walk {start//step_size+1}: Initial Balance: ${initial:.2f}, Final Balance: ${final:.2f} ({percent:.2f}%)"
+                  + (f", Max Drawdown: {max_drawdown_pct:.2f}%" if max_drawdown_pct is not None else ""))
+        print(f"Walk {start//step_size+1}: RMSE={eval_result['rmse']:.2f}, MAE={eval_result['mae']:.2f}")
+        results.append({'eval': eval_result, 'trading': trading_performance})
+    return results
+
+
+def print_final_balance(walk_results):
+    """Вивести кінцевий баланс та статистику останнього кроку walk-forward."""
+    for i, res in enumerate(reversed(walk_results), 1):
+        t = res['trading']
+        if t is None:
+            print(f"⚠️ Крок {len(walk_results)-i+1}: trading_performance = None")
+        elif 'final_equity' not in t:
+            print(f"⚠️ Крок {len(walk_results)-i+1}: trading_performance без final_equity")
+        else:
+            initial = t['initial_investment']
+            final = t['final_equity']
+            percent = (final / initial) * 100 if initial else 0
+            equity_curve = t.get('equity_curve')
+            if equity_curve is not None:
+                peak = equity_curve[0]
+                max_drawdown = 0
+                for x in equity_curve:
+                    if x > peak:
+                        peak = x
+                    drawdown = (peak - x) / peak
+                    if drawdown > max_drawdown:
+                        max_drawdown = drawdown
+                max_drawdown_pct = max_drawdown * 100
+            else:
+                max_drawdown_pct = None
+            print(f"\n🏁 Кінцевий баланс після walk-forward: ${final:.2f} ({percent:.2f}%)"
+                  + (f", Max Drawdown: {max_drawdown_pct:.2f}%" if max_drawdown_pct is not None else ""))
+            return
+    print("\n❗️ Кінцевий баланс не знайдено.")
+
+
 def main():
     """Main function to run the market analysis system."""
     args = parse_arguments()
@@ -364,6 +500,10 @@ def main():
         # Plot results
         plot_results(evaluation_results, args)
         
+        # Run trading simulation if requested
+        if args.run_trading:
+            trading_performance = run_trading_simulation(evaluation_results, args)
+        
         print("✅ Market analysis completed!")
         
     except Exception as e:
@@ -373,4 +513,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_arguments()
+    args.initial_balance = 10000  # Гарантуємо початковий баланс 10k$
+    data = fetch_data(args)
+    X_train, y_train, X_val, y_val, X_test, y_test, scaler = process_data(data, args)
+    X = np.concatenate([X_train, X_val, X_test], axis=0)
+    y = np.concatenate([y_train, y_val, y_test], axis=0)
+    walk_results = walk_forward_training(X, y, args, window_size=500, step_size=100)
+    print_final_balance(walk_results)
+    # main() # <- закоментуйте або видаліть цей рядок, якщо хочете запускати лише walk-forward

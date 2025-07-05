@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
+from typing import Dict, Any
 
 # Add the CRYPTO_BOT directory to the Python path
 crypto_bot_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
@@ -19,6 +20,7 @@ from ai.ML1.market_analysis.data.fetchers.csv_fetcher import CSVFetcher
 from ai.ML1.market_analysis.data.features.technical_indicators import TechnicalIndicators
 from ai.ML1.market_analysis.data.features.feature_selector import FeatureSelector
 from ai.ML1.market_analysis.models.model_factory import ModelFactory
+from ai.ML1.market_analysis.trading import SimpleStrategy
 
 
 def parse_arguments():
@@ -53,6 +55,16 @@ def parse_arguments():
                         help='Path to save the predictions (default: None)')
     parser.add_argument('--no_plot', action='store_true',
                         help='Skip plotting results')
+    
+    # Trading simulation parameters
+    parser.add_argument('--run_trading', action='store_true',
+                        help='Run trading simulation on predicted data')
+    parser.add_argument('--initial_investment', type=float, default=10000.0,
+                        help='Initial investment amount for trading simulation (default: 10000.0)')
+    parser.add_argument('--transaction_fee', type=float, default=0.001,
+                        help='Transaction fee as a percentage for trading simulation (default: 0.001 = 0.1%)')
+    parser.add_argument('--last_price', type=float, default=None,
+                        help='Last known price (if not provided, will use the last price from historical data)')
     
     return parser.parse_args()
 
@@ -262,6 +274,64 @@ def save_predictions(predictions_df, args):
         print("✅ Predictions saved")
 
 
+def simulate_trading(predictions_df, args) -> Dict[str, Any]:
+    """
+    Simulate trading based on predicted prices.
+    
+    Args:
+        predictions_df: DataFrame containing predicted prices
+        args: Command line arguments
+        
+    Returns:
+        Dictionary containing trading performance metrics
+    """
+    if not args.run_trading:
+        return None
+    
+    print("\n🤖 Running trading simulation on predicted prices...")
+    
+    # Create trading strategy
+    strategy = SimpleStrategy(
+        initial_investment=args.initial_investment,
+        transaction_fee=args.transaction_fee
+    )
+    
+    # Get the last known price (either provided or from historical data)
+    last_price = args.last_price
+    if last_price is None:
+        print("Warning: No last price provided. Using the first predicted price as reference.")
+        last_price = predictions_df['predicted_price'].iloc[0] * 0.99  # Slightly lower to trigger a buy
+    
+    # Create a list of prices for simulation
+    # Start with the last known price, then add all predicted prices
+    prices = [last_price] + predictions_df['predicted_price'].tolist()
+    
+    # Create a list of "predictions" (shifted by 1)
+    # For the first price, use the first prediction to make a decision
+    predictions = predictions_df['predicted_price'].tolist() + [predictions_df['predicted_price'].iloc[-1]]
+    
+    # Run backtest
+    performance = strategy.backtest(np.array(prices), np.array(predictions))
+    
+    # Print performance metrics
+    print("\n=== POTENTIAL TRADING PERFORMANCE ===")
+    print(f"Initial Investment: ${performance['initial_investment']:.2f}")
+    print(f"Final Equity: ${performance['final_equity']:.2f}")
+    print(f"Absolute Return: ${performance['absolute_return']:.2f}")
+    print(f"Percentage Return: {performance['percentage_return']:.2f}%")
+    print(f"Number of Trades: {performance['num_trades']}")
+    if 'win_rate' in performance:
+        print(f"Win Rate: {performance['win_rate']:.2f}%")
+    
+    # Plot equity curve if not disabled
+    if not args.no_plot:
+        plot_path = strategy.plot_equity_curve(args.symbol, args.model_type)
+        if plot_path:
+            print(f"✅ Trading performance plot saved to {plot_path}")
+    
+    return performance
+
+
 def main():
     """Main function to run the prediction."""
     args = parse_arguments()
@@ -290,6 +360,10 @@ def main():
         
         # Save predictions
         save_predictions(predictions_df, args)
+        
+        # Run trading simulation if requested
+        if args.run_trading:
+            trading_performance = simulate_trading(predictions_df, args)
         
         print("✅ Prediction completed!")
         

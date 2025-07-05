@@ -1,0 +1,1 @@
+strategy = SimpleStrategy(initial_balance=10000, transaction_fee=0.001, threshold=0)

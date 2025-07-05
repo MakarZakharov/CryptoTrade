@@ -1,0 +1,4 @@
+class SimpleStrategy:
+    def __init__(self, initial_balance=10000, transaction_fee=0.001):
+        self.initial_balance = initial_balance
+        self.transaction_fee = transaction_fee
