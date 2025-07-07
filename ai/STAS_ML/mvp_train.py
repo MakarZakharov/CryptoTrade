@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MVP скрипт для швидкого запуску навчання STAS_ML агента.
-Простий інтерфейс для початку навчання з мінімальними налаштуваннями.
+MVP скрипт для быстрого запуска обучения STAS_ML агента.
+Простой интерфейс для начала обучения с минимальными настройками.
 """
 
 import os
@@ -9,7 +9,7 @@ import sys
 import argparse
 from datetime import datetime
 
-# Додаємо шлях до модулів проекту
+# Добавляем путь к модулям проекта
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 sys.path.insert(0, project_root)
 
@@ -21,15 +21,15 @@ from CryptoTrade.ai.STAS_ML.evaluation.evaluate import quick_evaluate
 
 
 def print_banner():
-    """Вивести банер програми."""
+    """Вывести баннер программы."""
     print("🚀" + "="*60 + "🚀")
-    print("   MVP НАВЧАННЯ STAS_ML АГЕНТА ДЛЯ ТОРГІВЛІ КРИПТОВАЛЮТАМИ")
+    print("   MVP ОБУЧЕНИЕ STAS_ML АГЕНТА ДЛЯ ТОРГОВЛИ КРИПТОВАЛЮТАМИ")
     print("🚀" + "="*60 + "🚀")
     print()
 
 
 def check_dependencies():
-    """Перевірити наявність необхідних залежностей."""
+    """Проверить наличие необходимых зависимостей."""
     missing_deps = []
     
     try:
@@ -48,20 +48,20 @@ def check_dependencies():
         missing_deps.append("tensorboard")
     
     if missing_deps:
-        print("❌ Відсутні залежності:")
+        print("❌ Отсутствуют зависимости:")
         for dep in missing_deps:
             print(f"   - {dep}")
-        print("\n💡 Встановіть залежності:")
+        print("\n💡 Установите зависимости:")
         print("   pip install -r CryptoTrade/requirements.txt")
         return False
     
-    print("✅ Всі залежності встановлені")
+    print("✅ Все зависимости установлены")
     return True
 
 
 def show_available_data():
-    """Показати доступні дані."""
-    print("📊 Доступні дані:")
+    """Показать доступные данные."""
+    print("📊 Доступные данные:")
     available_pairs = DataManager.get_available_pairs()
     
     total_pairs = 0
@@ -69,51 +69,51 @@ def show_available_data():
         print(f"   {exchange}: {len(pairs)} пар")
         total_pairs += len(pairs)
     
-    print(f"   Всього: {total_pairs} торгових пар")
+    print(f"   Всего: {total_pairs} торговых пар")
     print()
 
 
 def create_quick_config():
-    """Створити швидку конфігурацію."""
-    print("⚡ Швидке налаштування (рекомендується для початківців):")
-    print("   1. BTCUSDT на денному таймфреймі")
+    """Создать быструю конфигурацию."""
+    print("⚡ Быстрая настройка (рекомендуется для начинающих):")
+    print("   1. BTCUSDT на дневном таймфрейме")
     print("   2. PPO агент")
-    print("   3. Оптимізована схема винагород")
-    print("   4. 100,000 кроків навчання")
+    print("   3. Оптимизированная схема наград")
+    print("   4. 100,000 шагов обучения")
     
-    choice = input("\nВикористовувати швидке налаштування? (y/n): ").lower()
+    choice = input("\nИспользовать быструю настройку? (y/n): ").lower()
     
-    if choice in ['y', 'yes', 'так', '']:
+    if choice in ['y', 'yes', 'да', '']:
         return TradingConfig(
             symbol='BTCUSDT',
             timeframe='1d',
             reward_scheme='optimized',
-            initial_balance=10000.0
+            initial_balance=100.0
         ), "PPO", 100000
     
     return None, None, None
 
 
 def custom_config_menu():
-    """Меню кастомної конфігурації."""
-    print("\n🛠️ Кастомне налаштування:")
+    """Меню кастомной конфигурации."""
+    print("\n🛠️ Кастомная настройка:")
     
-    # Вибір пари
+    # Выбор пары
     available_pairs = DataManager.get_available_pairs()
-    print("\nДоступні біржі:")
+    print("\nДоступные биржи:")
     exchanges = list(available_pairs.keys())
     for i, exchange in enumerate(exchanges, 1):
         print(f"   {i}. {exchange}")
     
     while True:
         try:
-            choice = int(input(f"Оберіть біржу (1-{len(exchanges)}): ")) - 1
+            choice = int(input(f"Выберите биржу (1-{len(exchanges)}): ")) - 1
             if 0 <= choice < len(exchanges):
                 selected_exchange = exchanges[choice]
                 break
         except ValueError:
             pass
-        print("❌ Невірний вибір!")
+        print("❌ Неверный выбор!")
     
     # Выбор пары
     pairs = available_pairs[selected_exchange]
@@ -193,128 +193,105 @@ def custom_config_menu():
         symbol=symbol,
         timeframe=selected_timeframe,
         reward_scheme='optimized',
-        initial_balance=10000.0
+        initial_balance=100.0
     )
     
     return config, agent_type, timesteps
 
 
-def get_model_storage_path(config: TradingConfig, model_type: str = "final") -> str:
-    """
-    Визначити шлях збереження моделі на основі конфігурації.
-    
-    Args:
-        config: Конфігурація торгового середовища
-        model_type: Тип моделі ("final", "best", "checkpoint")
-        
-    Returns:
-        Повний шлях до файлу моделі
-    """
-    experiment_name = f"{config.symbol}_{config.timeframe}_{config.reward_scheme}"
-    model_dir = os.path.join("models", experiment_name)
-    
-    if model_type == "final":
-        return os.path.join(model_dir, "final_model.zip")
-    elif model_type == "best":
-        return os.path.join(model_dir, "best_model.zip")
-    elif model_type == "checkpoint":
-        return os.path.join(model_dir, "checkpoints")
-    else:
-        return os.path.join(model_dir, f"{model_type}.zip")
-
-
-def show_model_locations(config: TradingConfig):
-    """Показати інформацію про розташування моделей."""
-    experiment_name = f"{config.symbol}_{config.timeframe}_{config.reward_scheme}"
-    model_dir = os.path.join("models", experiment_name)
-    
-    print(f"\n📁 Розташування моделей для експерименту: {experiment_name}")
-    print(f"   Базова директорія: {os.path.abspath(model_dir)}")
-    
-    # Перевіряємо які моделі існують
-    model_files = {
-        "Фінальна модель": os.path.join(model_dir, "final_model.zip"),
-        "Найкраща модель": os.path.join(model_dir, "best_model.zip"),
-        "Директорія чекпоінтів": os.path.join(model_dir, "checkpoints")
-    }
-    
-    for model_name, model_path in model_files.items():
-        if os.path.exists(model_path):
-            if os.path.isdir(model_path):
-                # Підрахунок файлів у директорії чекпоінтів
-                try:
-                    checkpoint_files = [f for f in os.listdir(model_path) if f.endswith('.zip')]
-                    print(f"   ✅ {model_name}: {model_path} ({len(checkpoint_files)} файлів)")
-                except:
-                    print(f"   ✅ {model_name}: {model_path}")
-            else:
-                # Розмір файлу моделі
-                try:
-                    size_mb = os.path.getsize(model_path) / (1024 * 1024)
-                    print(f"   ✅ {model_name}: {model_path} ({size_mb:.1f} MB)")
-                except:
-                    print(f"   ✅ {model_name}: {model_path}")
-        else:
-            print(f"   ❌ {model_name}: {model_path} (не існує)")
-    
-    # Логи
-    log_dir = os.path.join("logs", experiment_name)
-    if os.path.exists(log_dir):
-        print(f"   📊 Логи: {os.path.abspath(log_dir)}")
-    else:
-        print(f"   📊 Логи: {os.path.abspath(log_dir)} (не існує)")
-
-
 def main():
-    """Головна функція MVP - автоматичний запуск."""
+    """Главная функция MVP - автоматический запуск."""
     print_banner()
     
-    # Перевіряємо залежності
+    # Проверяем зависимости
     if not check_dependencies():
         return
     
-    # Автоматична конфігурація (BTCUSDT, 1d, PPO, optimized)
+    # Спрашиваем у пользователя название модели
+    print("🏷️ Настройка имени модели:")
+    print("   1. Автоматическое имя (BTCUSDT_1d_optimized)")
+    print("   2. Пользовательское имя")
+    
+    custom_name = None
+    choice = input("Выберите (1-2) или Enter для автоматического: ").strip()
+    
+    if choice == "2":
+        custom_name = input("Введите имя модели (например, my_best_model): ").strip()
+        if not custom_name:
+            print("⚠️ Пустое имя, используем автоматическое")
+            custom_name = None
+    
+    # ОПТИМІЗОВАНА конфігурація для роботи з падаючими ринками
     config = TradingConfig(
         symbol='BTCUSDT',
         timeframe='1d',
-        reward_scheme='optimized',
-        initial_balance=10000.0
+        reward_scheme='bear_market_optimized',  # Спеціальна схема для падаючих ринків
+        initial_balance=10000.0,
+        lookback_window=20,  # ЗМЕНШЕНО для швидшої реакції
+        
+        # ОПТИМІЗОВАНІ ПАРАМЕТРИ для стабільної торгівлі
+        enable_position_sizing=True,
+        max_risk_per_trade=0.05,  # ЗМЕНШЕНО до 5% для зниження ризику
+        position_size_method='fixed_ratio',  # Фіксований ratio для стабільності
+        
+        # РОЗШИРЕНИЙ Stop-Loss для падаючих ринків
+        enable_stop_loss=False,  # ВИМКНЕНО для максимальної активності
+        stop_loss_type='percentage',
+        stop_loss_percentage=0.30,  # Високий поріг якщо включено
+        
+        # РОЗШИРЕНІ межі для падаючих ринків
+        max_drawdown_limit=0.30,  # 30% для роботи з волатильними падіннями
+        reduce_position_on_drawdown=False,  # Не зменшуємо позиції - беремо можливості
+        
+        # ОПТИМАЛЬНІ торгові параметри
+        min_trade_amount=5.0,  # ЗМЕНШЕНО до $5 для дуже частих входів
+        commission_rate=0.0001,  # ЗМЕНШЕНО комісію у 10 разів для активності
+        slippage_rate=0.0001,   # ЗМЕНШЕНО проскальзування у 5 разів
+        spread_rate=0.00005,    # ЗМЕНШЕНО спред у 4 рази
+        
+        # РОЗШИРЕНІ технічні індикатори для падаючих ринків
+        include_technical_indicators=True,
+        indicator_periods={
+            'sma': [10, 20, 50],  # Додано короткий SMA для швидкої реакції
+            'ema': [8, 21, 55],   # EMA для швидшого виявлення змін тренду
+            'rsi': [14, 21],      # Два RSI для різних періодів
+            'macd': [12, 26, 9],
+            'bollinger': [20],
+            'atr': [14, 28],      # Два ATR для волатільності
+            'stoch': [14],        # Stochastic для oversold/overbought
+            'williams_r': [14],   # Williams %R для momentum
+        }
     )
     agent_type = "PPO"
-    timesteps = 1000000  # Збільшено до 1 мільйона кроків (~3-4 години навчання)
+    timesteps = 250000  # Збільшено для кращого навчання з новими параметрами
     
-    # Показуємо налаштування
-    print(f"🚀 Автоматичний запуск навчання:")
+    # Показываем настройки
+    print(f"🚀 Автоматический запуск обучения:")
     print(f"   Пара: {config.symbol}")
     print(f"   Таймфрейм: {config.timeframe}")
     print(f"   Агент: {agent_type}")
-    print(f"   Кроків: {timesteps:,}")
-    print(f"   Схема винагород: {config.reward_scheme}")
-    
-    # Показуємо інформацію про розташування моделей
-    show_model_locations(config)
-    
-    print(f"💡 Моніторинг: tensorboard --logdir logs")
-    print(f"💡 Для зупинки: Ctrl+C")
+    print(f"   Шагов: {timesteps:,}")
+    print(f"   Схема наград: {config.reward_scheme}")
+    if custom_name:
+        print(f"   Имя модели: {custom_name}")
+    print(f"💡 Мониторинг: tensorboard --logdir logs")
+    print(f"💡 Для остановки: Ctrl+C")
     print("-" * 60)
     
     try:
-        trainer = DRLTrainer(config, resume_training=True)
+        trainer = DRLTrainer(config, resume_training=True, custom_model_name=custom_name)
         agent = trainer.train(
             total_timesteps=timesteps,
             agent_type=agent_type
         )
         
-        print(f"\n✅ Навчання завершено успішно!")
-        print(f"📁 Модель збережена в: models/{trainer.experiment_name}")
+        print(f"\n✅ Обучение завершено успешно!")
+        print(f"📁 Модель сохранена в: {trainer.save_dir}/{trainer.experiment_name}")
         print(f"📊 Логи в: logs/{trainer.experiment_name}")
         
-        # Показуємо детальну інформацію про збережені моделі
-        show_model_locations(config)
-        
-        # Автоматична оцінка
-        print("\n🔍 Запуск автоматичної оцінки...")
-        model_path = f"models/{trainer.experiment_name}/final_model"
+        # Автоматическая оценка
+        print("\n🔍 Запуск автоматической оценки...")
+        model_path = f"{trainer.save_dir}/{trainer.experiment_name}/final_model"
         try:
             evaluator, results, report = quick_evaluate(
                 model_path=model_path,
@@ -323,51 +300,48 @@ def main():
                 agent_type=agent_type,
                 episodes=5
             )
-            print(f"✅ Оцінка завершена!")
+            print(f"✅ Оценка завершена!")
         except Exception as e:
-            print(f"❌ Помилка при оцінці: {e}")
+            print(f"❌ Ошибка при оценке: {e}")
         
     except KeyboardInterrupt:
-        print(f"\n⏹️ Навчання зупинено користувачем")
+        print(f"\n⏹️ Обучение остановлено пользователем")
     except Exception as e:
-        print(f"\n❌ Помилка під час навчання: {e}")
-        print(f"💡 Перевірте логи в: logs/")
+        print(f"\n❌ Ошибка во время обучения: {e}")
+        print(f"💡 Проверьте логи в: logs/")
 
 
 if __name__ == "__main__":
-    # Підтримка аргументів командного рядка для досвідчених користувачів
-    parser = argparse.ArgumentParser(description='MVP навчання STAS_ML агента', add_help=False)
-    parser.add_argument('--interactive', action='store_true', 
-                       help='Інтерактивний режим налаштування')
-    parser.add_argument('--symbol', default='BTCUSDT', help='Торгова пара')
+    # Поддержка аргументов командной строки для продвинутых пользователей
+    parser = argparse.ArgumentParser(description='MVP обучение STAS_ML агента', add_help=False)
+    parser.add_argument('--quick', action='store_true', 
+                       help='Быстрый запуск с настройками по умолчанию')
+    parser.add_argument('--symbol', default='BTCUSDT', help='Торговая пара')
     parser.add_argument('--timeframe', default='1d', help='Таймфрейм')
     parser.add_argument('--agent', default='PPO', choices=['PPO', 'DQN'], help='Тип агента')
-    parser.add_argument('--timesteps', type=int, default=200000, help='Кількість кроків')
-    parser.add_argument('--help', '-h', action='store_true', help='Показати довідку')
+    parser.add_argument('--timesteps', type=int, default=100000, help='Количество шагов')
+    parser.add_argument('--help', '-h', action='store_true', help='Показать помощь')
     
     args = parser.parse_args()
     
     if args.help:
-        print("🚀 MVP Навчання STAS_ML Агента")
-        print("\nВикористання:")
-        print("  python mvp_train.py                    # Швидкий запуск (за замовчуванням)")
-        print("  python mvp_train.py --interactive      # Інтерактивний режим")
-        print("  python mvp_train.py --symbol ETHUSDT --timesteps 300000")
-        print("\nОпції:")
+        print("🚀 MVP Обучение STAS_ML Агента")
+        print("\nИспользование:")
+        print("  python mvp_train.py                    # Интерактивный режим")
+        print("  python mvp_train.py --quick            # Быстрый запуск")
+        print("  python mvp_train.py --quick --symbol ETHUSDT --timesteps 200000")
+        print("\nОпции:")
         parser.print_help()
         sys.exit(0)
     
-    if args.interactive:
-        # Інтерактивний режим
-        main()
-    else:
-        # Швидкий запуск без інтерактивності (за замовчуванням)
+    if args.quick:
+        # Быстрый запуск без интерактивности
         print_banner()
-        print(f"⚡ Швидкий запуск навчання:")
+        print(f"⚡ Быстрый запуск обучения:")
         print(f"   Пара: {args.symbol}")
         print(f"   Таймфрейм: {args.timeframe}")
         print(f"   Агент: {args.agent}")
-        print(f"   Кроків: {args.timesteps:,}")
+        print(f"   Шагов: {args.timesteps:,}")
         
         try:
             agent = quick_train(
@@ -377,6 +351,9 @@ if __name__ == "__main__":
                 timesteps=args.timesteps,
                 reward_scheme='optimized'
             )
-            print("✅ Швидке навчання завершено!")
+            print("✅ Быстрое обучение завершено!")
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Ошибка: {e}")
+    else:
+        # Интерактивный режим
+        main()

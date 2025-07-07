@@ -1,5 +1,5 @@
 """
-Callbacks для процесса обучения STAS_ML агентов.
+Callbacks для процесу навчання STAS_ML агентів.
 """
 
 import os
@@ -7,11 +7,10 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Any
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.logger import Figure
 
 
 class TradingCallback(BaseCallback):
-    """Callback для мониторинга торговых метрик."""
+    """Callback для моніторингу торгових метрик."""
     
     def __init__(self, log_dir: str, experiment_name: str, verbose: int = 1):
         super().__init__(verbose)
@@ -23,16 +22,36 @@ class TradingCallback(BaseCallback):
         self.episode_win_rates = []
         self.episode_trades = []
         
-        # Создаем директорию для логов
+        # Структурований вивід метрик
+        self.analysis_data = []
+        self.last_report_step = 0
+        self.report_interval = 100  # Кожні 100 кроків
+        
+        # Створюємо директорію для логів
         os.makedirs(log_dir, exist_ok=True)
         
     def _on_step(self) -> bool:
-        """Вызывается на каждом шаге."""
-        # Получаем информацию из среды
+        """Викликається на кожному кроці."""
+        current_step = self.num_timesteps
+        
+        # Отримуємо інформацію з середовища
         if len(self.locals.get('infos', [])) > 0:
             info = self.locals['infos'][0]
             
-            # Записываем метрики в tensorboard
+            # Збираємо дані для структурованого виводу
+            if 'portfolio_value' in info and 'total_return' in info:
+                step_data = {
+                    'step': current_step,
+                    'portfolio_value': info.get('portfolio_value', 0),
+                    'total_return': info.get('total_return', 0),
+                    'max_drawdown': info.get('max_drawdown', 0),
+                    'total_trades': info.get('total_trades', 0),
+                    'win_rate': info.get('win_rate', 0),
+                    'current_price': info.get('current_price', 0)
+                }
+                self.analysis_data.append(step_data)
+            
+            # Записуємо метрики в tensorboard
             if 'portfolio_value' in info:
                 self.logger.record('trading/portfolio_value', info['portfolio_value'])
             if 'total_return' in info:
@@ -43,67 +62,174 @@ class TradingCallback(BaseCallback):
                 self.logger.record('trading/win_rate', info['win_rate'])
             if 'total_trades' in info:
                 self.logger.record('trading/total_trades', info['total_trades'])
+            
+            # Структурований вивід кожні report_interval кроків
+            if current_step - self.last_report_step >= self.report_interval:
+                self._print_structured_report()
+                self.last_report_step = current_step
         
         return True
     
+    def _print_structured_report(self):
+        """Виводить структурований звіт по етапах навчання."""
+        if not self.analysis_data:
+            return
+        
+        current_data = self.analysis_data[-1]
+        step = current_data['step']
+        
+        print(f"\n{'='*60}")
+        print(f"📊 ЗВІТ ПО НАВЧАННЮ - Крок {step:,}")
+        print(f"{'='*60}")
+        
+        # Основні метрики
+        profit_percent = current_data['total_return'] * 100
+        drawdown_percent = current_data['max_drawdown'] * 100
+        total_trades = current_data['total_trades']
+        win_rate_percent = current_data['win_rate'] * 100
+        
+        # Визначаємо статус прибутковості
+        if profit_percent > 0:
+            profit_status = "🟢 ПРИБУТОК"
+        elif profit_percent < -5:
+            profit_status = "🔴 ЗБИТОК"
+        else:
+            profit_status = "🟡 БЕЗЗБИТКОВІСТЬ"
+        
+        # Визначаємо рівень просадки
+        if drawdown_percent < 5:
+            drawdown_status = "🟢 НИЗЬКА"
+        elif drawdown_percent < 15:
+            drawdown_status = "🟡 ПОМІРНА"
+        else:
+            drawdown_status = "🔴 ВИСОКА"
+        
+        print(f"💰 ПРИБУТКОВІСТЬ:")
+        print(f"   Загальна доходність: {profit_percent:+.2f}% ({profit_status})")
+        print(f"   Поточна вартість портфеля: ${current_data['portfolio_value']:,.2f}")
+        
+        print(f"\n📉 РИЗИКИ:")
+        print(f"   Максимальна просадка: {drawdown_percent:.2f}% ({drawdown_status})")
+        
+        print(f"\n📈 ТОРГОВА АКТИВНІСТЬ:")
+        print(f"   Кількість угод: {total_trades}")
+        print(f"   Відсоток прибуткових угод: {win_rate_percent:.1f}%")
+        
+        # Аналіз ефективності за останні кроки
+        if len(self.analysis_data) >= 10:
+            recent_data = self.analysis_data[-10:]
+            recent_returns = [d['total_return'] for d in recent_data]
+            recent_trend = recent_returns[-1] - recent_returns[0]
+            
+            if recent_trend > 0.01:
+                trend_status = "📈 ЗРОСТАЮЧИЙ"
+            elif recent_trend < -0.01:
+                trend_status = "📉 СПАДНИЙ"
+            else:
+                trend_status = "➡️ СТАБІЛЬНИЙ"
+            
+            print(f"\n📊 ТРЕНД (останні {len(recent_data)} кроків):")
+            print(f"   Напрямок: {trend_status}")
+            print(f"   Зміна доходності: {recent_trend*100:+.2f}%")
+        
+        print(f"\n💡 РЕКОМЕНДАЦІЇ:")
+        
+        # Рекомендації на основі метрик
+        recommendations = []
+        
+        if drawdown_percent > 20:
+            recommendations.append("⚠️ Висока просадка - розгляньте зменшення розміру позицій")
+        
+        if total_trades < step // 100:
+            recommendations.append("🔄 Низька торгова активність - агент може бути занадто консервативним")
+        
+        if win_rate_percent < 40 and total_trades > 10:
+            recommendations.append("🎯 Низький винрейт - потрібно покращити стратегію входу/виходу")
+        
+        if profit_percent > 10 and drawdown_percent < 10:
+            recommendations.append("✅ Відмінні результати - продовжуйте навчання")
+        
+        if not recommendations:
+            recommendations.append("📊 Результати в межах норми - продовжуйте спостереження")
+        
+        for rec in recommendations:
+            print(f"   {rec}")
+        
+        print(f"{'='*60}\n")
+        
+        # Зберігаємо звіт у файл
+        self._save_report_to_file()
+    
+    def _save_report_to_file(self):
+        """Зберігає детальний звіт у CSV файл."""
+        if not self.analysis_data:
+            return
+        
+        # Створюємо DataFrame з усіх зібраних даних
+        df = pd.DataFrame(self.analysis_data)
+        
+        # Додаємо розраховані колонки
+        df['profit_percent'] = df['total_return'] * 100
+        df['drawdown_percent'] = df['max_drawdown'] * 100
+        df['win_rate_percent'] = df['win_rate'] * 100
+        
+        # Зберігаємо у файл
+        report_path = os.path.join(self.log_dir, 'training_report.csv')
+        df.to_csv(report_path, index=False)
+        
+        # Також створюємо підсумковий звіт
+        if len(df) > 0:
+            summary = {
+                'final_step': df['step'].iloc[-1],
+                'final_profit_percent': df['profit_percent'].iloc[-1],
+                'max_drawdown_percent': df['drawdown_percent'].max(),
+                'total_trades': df['total_trades'].iloc[-1],
+                'final_win_rate_percent': df['win_rate_percent'].iloc[-1],
+                'best_return_percent': df['profit_percent'].max(),
+                'worst_drawdown_percent': df['drawdown_percent'].max()
+            }
+            
+            summary_df = pd.DataFrame([summary])
+            summary_path = os.path.join(self.log_dir, 'training_summary.csv')
+            summary_df.to_csv(summary_path, index=False)
+    
     def _on_episode_end(self) -> None:
-        """Вызывается в конце эпизода."""
+        """Викликається в кінці епізоду."""
         if len(self.locals.get('infos', [])) > 0:
             info = self.locals['infos'][0]
             
-            # Сохраняем метрики эпизода
+            # Зберігаємо метрики епізоду
             self.episode_returns.append(info.get('total_return', 0))
             self.episode_drawdowns.append(info.get('max_drawdown', 0))
             self.episode_win_rates.append(info.get('win_rate', 0))
             self.episode_trades.append(info.get('total_trades', 0))
             
-            # Записываем агрегированные метрики
+            # Записуємо агреговані метрики
             if len(self.episode_returns) > 0:
                 self.logger.record('episode/mean_return', np.mean(self.episode_returns[-100:]))
                 self.logger.record('episode/mean_drawdown', np.mean(self.episode_drawdowns[-100:]))
                 self.logger.record('episode/mean_win_rate', np.mean(self.episode_win_rates[-100:]))
                 self.logger.record('episode/mean_trades', np.mean(self.episode_trades[-100:]))
-    
-    def _on_training_end(self) -> None:
-        """Вызывается в конце обучения."""
-        # Сохраняем итоговые метрики
-        metrics = {
-            'final_mean_return': np.mean(self.episode_returns[-50:]) if self.episode_returns else 0,
-            'final_mean_drawdown': np.mean(self.episode_drawdowns[-50:]) if self.episode_drawdowns else 0,
-            'final_mean_win_rate': np.mean(self.episode_win_rates[-50:]) if self.episode_win_rates else 0,
-            'final_mean_trades': np.mean(self.episode_trades[-50:]) if self.episode_trades else 0,
-            'total_episodes': len(self.episode_returns)
-        }
-        
-        # Сохраняем в CSV
-        metrics_df = pd.DataFrame([metrics])
-        metrics_df.to_csv(f"{self.log_dir}/final_metrics.csv", index=False)
-        
-        print(f"📊 Итоговые метрики:")
-        print(f"  Средняя доходность: {metrics['final_mean_return']:.2%}")
-        print(f"  Средняя просадка: {metrics['final_mean_drawdown']:.2%}")
-        print(f"  Средний win rate: {metrics['final_mean_win_rate']:.2%}")
-        print(f"  Среднее количество сделок: {metrics['final_mean_trades']:.1f}")
 
 
 class TensorboardCallback(BaseCallback):
-    """Callback для расширенного логирования в Tensorboard."""
+    """Callback для розширеного логування в Tensorboard."""
     
     def __init__(self, log_dir: str, verbose: int = 1):
         super().__init__(verbose)
         self.log_dir = log_dir
         self.step_count = 0
         
-        # Создаем директорию
+        # Створюємо директорію
         os.makedirs(log_dir, exist_ok=True)
     
     def _on_step(self) -> bool:
-        """Логирование на каждом шаге."""
+        """Логування на кожному кроці."""
         self.step_count += 1
         
-        # Логируем каждые 1000 шагов
+        # Логуємо кожні 1000 кроків
         if self.step_count % 1000 == 0:
-            # Получаем награды
+            # Отримуємо винагороди
             if 'rewards' in self.locals:
                 rewards = self.locals['rewards']
                 if len(rewards) > 0:
@@ -111,7 +237,7 @@ class TensorboardCallback(BaseCallback):
                     self.logger.record('reward/max_reward', np.max(rewards))
                     self.logger.record('reward/min_reward', np.min(rewards))
             
-            # Логируем действия агента
+            # Логуємо дії агента
             if 'actions' in self.locals:
                 actions = self.locals['actions']
                 if len(actions) > 0:
@@ -119,81 +245,3 @@ class TensorboardCallback(BaseCallback):
                     self.logger.record('action/std_action', np.std(actions))
         
         return True
-
-
-class EarlyStoppingCallback(BaseCallback):
-    """Callback для раннего остановки обучения."""
-    
-    def __init__(self, patience: int = 50, min_improvement: float = 0.01, verbose: int = 1):
-        super().__init__(verbose)
-        self.patience = patience
-        self.min_improvement = min_improvement
-        self.best_mean_reward = -np.inf
-        self.patience_counter = 0
-    
-    def _on_step(self) -> bool:
-        """Проверка условий остановки."""
-        # Получаем текущую среднюю награду
-        if len(self.model.ep_info_buffer) > 0:
-            mean_reward = np.mean([ep_info['r'] for ep_info in self.model.ep_info_buffer])
-            
-            # Проверяем улучшение
-            if mean_reward > self.best_mean_reward + self.min_improvement:
-                self.best_mean_reward = mean_reward
-                self.patience_counter = 0
-                if self.verbose > 0:
-                    print(f"📈 Новый лучший результат: {mean_reward:.4f}")
-            else:
-                self.patience_counter += 1
-            
-            # Проверяем условие остановки
-            if self.patience_counter >= self.patience:
-                if self.verbose > 0:
-                    print(f"🛑 Ранняя остановка: нет улучшений {self.patience} шагов")
-                return False
-        
-        return True
-
-
-class PerformanceMonitorCallback(BaseCallback):
-    """Callback для мониторинга производительности системы."""
-    
-    def __init__(self, log_freq: int = 10000, verbose: int = 1):
-        super().__init__(verbose)
-        self.log_freq = log_freq
-        self.step_count = 0
-        
-        try:
-            import psutil
-            self.psutil_available = True
-        except ImportError:
-            self.psutil_available = False
-            if verbose > 0:
-                print("⚠️ psutil не доступен, мониторинг производительности отключен")
-    
-    def _on_step(self) -> bool:
-        """Мониторинг производительности."""
-        self.step_count += 1
-        
-        if self.step_count % self.log_freq == 0 and self.psutil_available:
-            import psutil
-            
-            # Мониторинг памяти
-            memory_info = psutil.virtual_memory()
-            self.logger.record('system/memory_usage_percent', memory_info.percent)
-            self.logger.record('system/memory_available_gb', memory_info.available / 1024**3)
-            
-            # Мониторинг CPU
-            cpu_percent = psutil.cpu_percent(interval=1)
-            self.logger.record('system/cpu_usage_percent', cpu_percent)
-            
-            # Мониторинг GPU (если доступен)
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    gpu_memory = torch.cuda.memory_allocated() / 1024**3
-                    self.logger.record('system/gpu_memory_gb', gpu_memory)
-            except ImportError:
-                pass
-        
-        return True 

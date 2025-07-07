@@ -1,1 +1,3 @@
-# training package for training scripts 
+"""
+Training module for STAS_ML agents.
+"""

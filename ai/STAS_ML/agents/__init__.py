@@ -1,1 +1,3 @@
-# agents package for STAS_ML agents
+"""
+STAS_ML agents module.
+"""

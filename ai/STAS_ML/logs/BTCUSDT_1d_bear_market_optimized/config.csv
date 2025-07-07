@@ -1,0 +1,2 @@
+symbol,timeframe,exchange,initial_balance,commission_rate,slippage_rate,spread_rate,reward_scheme,lookback_window,experiment_name,created_at
+BTCUSDT,1d,binance,10000.0,0.0001,0.0001,5e-05,bear_market_optimized,20,BTCUSDT_1d_bear_market_optimized,2025-07-07T17:02:28.228743

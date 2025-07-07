@@ -1,1 +1,3 @@
-# evaluation package for evaluation scripts 
+"""
+Evaluation module for STAS_ML agents.
+"""
