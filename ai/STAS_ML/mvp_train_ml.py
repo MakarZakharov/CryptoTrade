@@ -20,6 +20,7 @@ from CryptoTrade.ai.STAS_ML.config.training_targets import (
     TrainingTargets, ModelType, TargetType, ModelEvaluationService
 )
 from CryptoTrade.ai.STAS_ML.training.trainer import MLTrainer, quick_train_ml
+from CryptoTrade.ai.STAS_ML.data.data_processor import CryptoDataProcessor
 
 
 def print_banner():
@@ -174,14 +175,428 @@ def show_training_targets(config: MLConfig):
 
 
 
-def main():
-    """Главная функция MVP."""
+def iterative_segment_training():
+    """Итеративное обучение на разных сегментах данных до достижения целей."""
     print_banner()
     
     # Проверяем зависимости
     if not check_dependencies():
         return
     
+    # Показываем доступные данные
+    show_available_data()
+    
+    # Целевые показатели
+    TARGET_PROFIT = 500.0  # 500% прибыль
+    TARGET_MAX_DRAWDOWN = 60.0  # <60% просадка
+    TARGET_MIN_WINRATE = 0.50  # >50% винрейт
+    MIN_TRADES = 96  # Минимум 96 сделок для статистики
+    
+    print(f"\n🎯 ЦІЛЬОВІ ПОКАЗНИКИ ДЛЯ ДОСЯГНЕННЯ:")
+    print(f"   💰 Прибуток: ≥{TARGET_PROFIT}%")
+    print(f"   📉 Просадка: <{TARGET_MAX_DRAWDOWN}%") 
+    print(f"   🎯 Вінрейт: ≥{TARGET_MIN_WINRATE:.0%}")
+    print(f"   📊 Мінімум угод: {MIN_TRADES}")
+    print("-" * 60)
+    
+    # ОПТИМИЗИРОВАННЫЕ параметры для быстрого обучения
+    model_configs = [
+        # Быстрые конфигурации с уменьшенной сложностью
+        {'model_type': 'random_forest', 'min_threshold': 0.005, 'confidence': 0.45, 'lookback': 15, 'n_estimators': 50},
+        {'model_type': 'xgboost', 'min_threshold': 0.005, 'confidence': 0.45, 'lookback': 15, 'n_estimators': 50},
+        {'model_type': 'random_forest', 'min_threshold': 0.002, 'confidence': 0.40, 'lookback': 10, 'n_estimators': 30},
+    ]
+    
+    # СОКРАЩЕННЫЕ временные сегменты для быстрого тестирования
+    time_segments = [
+        ('2020-01-01', '2024-12-31'),  # Основной период
+        ('2021-01-01', '2024-12-31'),  # Более свежие данные
+        ('2022-01-01', '2024-12-31'),  # Новейший период
+    ]
+    
+    best_result = None
+    attempt = 0
+    max_attempts = len(model_configs) * len(time_segments)
+    
+    print(f"🚀 Начинаем итеративное обучение (макс. {max_attempts} попыток)")
+    
+    for config_params in model_configs:
+        for start_date, end_date in time_segments:
+            attempt += 1
+            print(f"\n{'='*60}")
+            print(f"🔄 ПОПЫТКА {attempt}/{max_attempts}")
+            print(f"📅 Период: {start_date} - {end_date}")
+            print(f"🤖 Модель: {config_params['model_type']}")
+            print(f"📊 Параметры: порог={config_params['min_threshold']}, "
+                  f"уверенность={config_params['confidence']}, lookback={config_params['lookback']}")
+            print(f"{'='*60}")
+            
+            try:
+                # Создаем конфигурацию для текущего эксперимента с БЫСТРЫМИ параметрами
+                config = MLConfig(
+                    symbol='BTCUSDT',
+                    timeframe='1d',
+                    model_type=config_params['model_type'],
+                    target_type='direction',
+                    lookback_window=config_params['lookback'],
+                    min_price_change_threshold=config_params['min_threshold'],
+                    signal_confidence_threshold=config_params['confidence']
+                )
+                
+                # АВТОМАТИЧЕСКИЙ ВЫБОР ЛУЧШИХ ИНДИКАТОРОВ
+                try:
+                    from CryptoTrade.ai.STAS_ML.data.feature_selector import create_auto_optimized_config
+                    
+                    print(f"🔍 Автоматический выбор индикаторов для {config.symbol}...")
+                    
+                    # Загружаем данные для анализа индикаторов
+                    temp_processor = CryptoDataProcessor(config)
+                    raw_data = temp_processor.load_data()
+                    segment_data_for_analysis = raw_data.loc[start_date:end_date].copy()
+                    
+                    if len(segment_data_for_analysis) >= 200:  # Минимум данных для анализа
+                        # Оптимизируем конфигурацию индикаторов
+                        config, selected_indicators = create_auto_optimized_config(config, segment_data_for_analysis)
+                        print(f"✅ Автоматически выбрано {selected_indicators['n_features']} лучших индикаторов")
+                    else:
+                        print(f"⚠️ Недостаточно данных для автоматической селекции, используем стандартные индикаторы")
+                
+                except Exception as e:
+                    print(f"⚠️ Ошибка автоматической селекции индикаторов: {e}")
+                    print(f"🔧 Используем стандартные индикаторы")
+                
+                # УСКОРЯЕМ обучение - уменьшаем параметры модели
+                if config_params['model_type'] == 'random_forest':
+                    config.rf_params['n_estimators'] = config_params.get('n_estimators', 30)
+                    config.rf_params['max_depth'] = 5  # Уменьшаем глубину
+                    config.rf_params['min_samples_split'] = 10  # Увеличиваем мин. сплит
+                elif config_params['model_type'] == 'xgboost':
+                    config.xgb_params['n_estimators'] = config_params.get('n_estimators', 30)
+                    config.xgb_params['max_depth'] = 3  # Уменьшаем глубину
+                    config.xgb_params['learning_rate'] = 0.1  # Увеличиваем learning rate
+                
+                # Создаем тренер
+                trainer = MLTrainer(config, custom_model_name=f"attempt_{attempt}_{config_params['model_type']}_{start_date[:4]}_{end_date[:4]}")
+                
+                # Модифицируем данные для конкретного временного сегмента
+                original_data = trainer.data_processor.load_data()
+                
+                # Фильтруем по временному сегменту
+                segment_data = original_data.loc[start_date:end_date].copy()
+                
+                if len(segment_data) < 500:  # Минимум данных
+                    print(f"⚠️ Недостаточно данных в сегменте ({len(segment_data)} записей), пропускаем")
+                    continue
+                
+                print(f"📊 Сегмент данных: {len(segment_data)} записей")
+                
+                # Временно заменяем метод load_data для использования сегмента
+                original_load_data = trainer.data_processor.load_data
+                trainer.data_processor.load_data = lambda: segment_data
+                
+                # Обучаем модель
+                metrics = trainer.train()
+                
+                # Восстанавливаем оригинальный метод
+                trainer.data_processor.load_data = original_load_data
+                
+                # Проверяем результаты
+                profit = metrics.get('trading_total_return_pct', 0)
+                drawdown = metrics.get('trading_max_drawdown_pct', 100)
+                winrate = metrics.get('trading_win_rate', 0)
+                trades = metrics.get('trading_total_trades', 0)
+                
+                print(f"\n📊 РЕЗУЛЬТАТЫ ПОПЫТКИ {attempt}:")
+                print(f"   💰 Прибуток: {profit:+.2f}% (цель: ≥{TARGET_PROFIT}%)")
+                print(f"   📉 Просадка: {drawdown:.2f}% (цель: <{TARGET_MAX_DRAWDOWN}%)")
+                print(f"   🎯 Вінрейт: {winrate:.1%} (цель: ≥{TARGET_MIN_WINRATE:.0%})")
+                print(f"   📊 Угод: {trades} (мін: {MIN_TRADES})")
+                
+                # Проверяем достижение целей
+                targets_met = (
+                    profit >= TARGET_PROFIT and
+                    drawdown < TARGET_MAX_DRAWDOWN and 
+                    winrate >= TARGET_MIN_WINRATE and
+                    trades >= MIN_TRADES
+                )
+                
+                if targets_met:
+                    print(f"\n🎉 ЦІЛІ ДОСЯГНУТІ! Попытка {attempt}")
+                    print(f"✅ Прибуток: {profit:+.2f}% ≥ {TARGET_PROFIT}%")
+                    print(f"✅ Просадка: {drawdown:.2f}% < {TARGET_MAX_DRAWDOWN}%")
+                    print(f"✅ Вінрейт: {winrate:.1%} ≥ {TARGET_MIN_WINRATE:.0%}")
+                    print(f"✅ Угод: {trades} ≥ {MIN_TRADES}")
+                    
+                    # Сохраняем успешную модель
+                    model_path = trainer.save_model()
+                    print(f"🎊 УСПЕШНАЯ МОДЕЛЬ СОХРАНЕНА: {model_path}")
+                    
+                    # Запускаем финальный бектест
+                    print(f"\n📈 Финальный бектест успешной модели...")
+                    backtest_results = run_backtrader_backtest(trainer, config)
+                    
+                    return {
+                        'success': True,
+                        'attempt': attempt,
+                        'config': config_params,
+                        'time_segment': (start_date, end_date),
+                        'metrics': metrics,
+                        'model_path': model_path
+                    }
+                
+                # Отслеживаем лучший результат даже если цели не достигнуты
+                if best_result is None or profit > best_result.get('profit', -999):
+                    best_result = {
+                        'attempt': attempt,
+                        'config': config_params,
+                        'time_segment': (start_date, end_date),
+                        'metrics': metrics,
+                        'trainer': trainer,
+                        'profit': profit,
+                        'drawdown': drawdown,
+                        'winrate': winrate,
+                        'trades': trades
+                    }
+                    print(f"💎 Новый лучший результат: {profit:+.2f}%")
+                
+            except KeyboardInterrupt:
+                print(f"\n⏹️ Обучение остановлено пользователем на попытке {attempt}")
+                break
+            except Exception as e:
+                print(f"❌ Ошибка в попытке {attempt}: {e}")
+                continue
+    
+    # АВТОМАТИЧЕСКОЕ ПРОДОЛЖЕНИЕ ОБУЧЕНИЯ ДО ДОСТИЖЕНИЯ ЦЕЛЕЙ
+    print(f"\n🔄 ЦІЛІ НЕ ДОСЯГНУТІ. АВТОМАТИЧНО ПРОДОЛЖАЄМО ОБУЧЕННЯ...")
+    
+    # Показываем лучший результат
+    if best_result:
+        print(f"\n📊 ПОТОЧНИЙ КРАЩИЙ РЕЗУЛЬТАТ:")
+        print(f"   💰 Прибуток: {best_result['profit']:+.2f}% (цель: {TARGET_PROFIT}%)")
+        print(f"   🎯 Вінрейт: {best_result['winrate']:.1%} (цель: ≥{TARGET_MIN_WINRATE:.0%})")
+        print(f"   📊 Угод: {best_result['trades']} (мін: {MIN_TRADES})")
+    
+    # АВТОМАТИЧЕСКОЕ РАСШИРЕННОЕ ОБУЧЕНИЕ БЕЗ ПОЛЬЗОВАТЕЛЬСКОГО ВВОДА
+    max_total_attempts = 100  # Максимум 100 попыток всего
+    current_round = 1
+    
+    while attempt < max_total_attempts:
+            print(f"\n🚀 Продолжаем обучение с более агрессивными параметрами...")
+            
+            # СОКРАЩЕННЫЕ агрессивные конфигурации для быстрого обучения
+            extended_configs = [
+                {'model_type': 'random_forest', 'min_threshold': 0.002, 'confidence': 0.40, 'lookback': 20, 'n_estimators': 20},
+                {'model_type': 'xgboost', 'min_threshold': 0.002, 'confidence': 0.40, 'lookback': 20, 'n_estimators': 20},
+            ]
+            
+            # СОКРАЩЕННЫЕ временные сегменты для быстрого обучения
+            extended_segments = [
+                ('2020-01-01', '2023-12-31'),  # 4 года основных данных
+                ('2021-01-01', '2024-12-31'),  # 4 года свежих данных
+            ]
+            
+            max_extended_attempts = len(extended_configs) * len(extended_segments)
+            extended_attempt = 0
+            
+            print(f"🔥 Расширенное обучение: {max_extended_attempts} дополнительных попыток")
+            
+            for config_params in extended_configs:
+                for start_date, end_date in extended_segments:
+                    extended_attempt += 1
+                    total_attempt = attempt + extended_attempt
+                    
+                    print(f"\n{'='*60}")
+                    print(f"🔥 РАСШИРЕННАЯ ПОПЫТКА {extended_attempt}/{max_extended_attempts} (общая {total_attempt})")
+                    print(f"📅 Период: {start_date} - {end_date}")
+                    print(f"🤖 Модель: {config_params['model_type']}")
+                    print(f"📊 Агрессивные параметры: порог={config_params['min_threshold']}, "
+                          f"уверенность={config_params['confidence']}, lookback={config_params['lookback']}")
+                    print(f"{'='*60}")
+                    
+                    try:
+                        # Создаем конфигурацию для расширенного эксперимента
+                        config = MLConfig(
+                            symbol='BTCUSDT',
+                            timeframe='1d',
+                            model_type=config_params['model_type'],
+                            target_type='direction',
+                            lookback_window=config_params['lookback'],
+                            min_price_change_threshold=config_params['min_threshold'],
+                            signal_confidence_threshold=config_params['confidence']
+                        )
+                        
+                        # Создаем тренер
+                        trainer = MLTrainer(config, custom_model_name=f"extended_{extended_attempt}_{config_params['model_type']}_{start_date[:4]}_{end_date[:4]}")
+                        
+                        # Модифицируем данные для конкретного временного сегмента
+                        original_data = trainer.data_processor.load_data()
+                        segment_data = original_data.loc[start_date:end_date].copy()
+                        
+                        if len(segment_data) < 500:
+                            print(f"⚠️ Недостаточно данных в расширенном сегменте ({len(segment_data)} записей), пропускаем")
+                            continue
+                        
+                        print(f"📊 Расширенный сегмент данных: {len(segment_data)} записей")
+                        
+                        # Временно заменяем метод load_data
+                        original_load_data = trainer.data_processor.load_data
+                        trainer.data_processor.load_data = lambda: segment_data
+                        
+                        # Обучаем модель
+                        metrics = trainer.train()
+                        
+                        # Восстанавливаем оригинальный метод
+                        trainer.data_processor.load_data = original_load_data
+                        
+                        # Проверяем результаты
+                        profit = metrics.get('trading_total_return_pct', 0)
+                        drawdown = metrics.get('trading_max_drawdown_pct', 100)
+                        winrate = metrics.get('trading_win_rate', 0)
+                        trades = metrics.get('trading_total_trades', 0)
+                        
+                        print(f"\n📊 РЕЗУЛЬТАТЫ РАСШИРЕННОЙ ПОПЫТКИ {extended_attempt}:")
+                        print(f"   💰 Прибуток: {profit:+.2f}% (цель: ≥{TARGET_PROFIT}%)")
+                        print(f"   📉 Просадка: {drawdown:.2f}% (цель: <{TARGET_MAX_DRAWDOWN}%)")
+                        print(f"   🎯 Вінрейт: {winrate:.1%} (цель: ≥{TARGET_MIN_WINRATE:.0%})")
+                        print(f"   📊 Угод: {trades} (мін: {MIN_TRADES})")
+                        
+                        # Проверяем достижение целей
+                        targets_met = (
+                            profit >= TARGET_PROFIT and
+                            drawdown < TARGET_MAX_DRAWDOWN and 
+                            winrate >= TARGET_MIN_WINRATE and
+                            trades >= MIN_TRADES
+                        )
+                        
+                        if targets_met:
+                            print(f"\n🎉 ЦІЛІ ДОСЯГНУТІ В РАСШИРЕННОМ ОБУЧЕНИИ! Попытка {extended_attempt}")
+                            print(f"✅ Прибуток: {profit:+.2f}% ≥ {TARGET_PROFIT}%")
+                            print(f"✅ Просадка: {drawdown:.2f}% < {TARGET_MAX_DRAWDOWN}%")
+                            print(f"✅ Вінрейт: {winrate:.1%} ≥ {TARGET_MIN_WINRATE:.0%}")
+                            print(f"✅ Угод: {trades} ≥ {MIN_TRADES}")
+                            
+                            # Сохраняем успешную модель
+                            model_path = trainer.save_model()
+                            print(f"🎊 УСПЕШНАЯ РАСШИРЕННАЯ МОДЕЛЬ СОХРАНЕНА: {model_path}")
+                            
+                            return {
+                                'success': True,
+                                'attempt': total_attempt,
+                                'extended_training': True,
+                                'config': config_params,
+                                'time_segment': (start_date, end_date),
+                                'metrics': metrics,
+                                'model_path': model_path
+                            }
+                        
+                        # Обновляем лучший результат если нашли лучше
+                        if profit > best_result.get('profit', -999):
+                            best_result.update({
+                                'attempt': total_attempt,
+                                'extended_training': True,
+                                'config': config_params,
+                                'time_segment': (start_date, end_date),
+                                'metrics': metrics,
+                                'trainer': trainer,
+                                'profit': profit,
+                                'drawdown': drawdown,
+                                'winrate': winrate,
+                                'trades': trades
+                            })
+                            print(f"💎 НОВЫЙ ЛУЧШИЙ РЕЗУЛЬТАТ В РАСШИРЕННОМ ОБУЧЕНИИ: {profit:+.2f}%")
+                        
+                    except KeyboardInterrupt:
+                        print(f"\n⏹️ Расширенное обучение остановлено пользователем")
+                        break
+                    except Exception as e:
+                        print(f"❌ Ошибка в расширенной попытке {extended_attempt}: {e}")
+                        continue
+            
+            # Обновляем attempt для следующего раунда
+            attempt += max_extended_attempts
+            current_round += 1
+            
+            # Добавляем еще более агрессивные параметры для следующих раундов
+            if current_round > 2:
+                extended_configs.extend([
+                    {'model_type': 'random_forest', 'min_threshold': 0.001, 'confidence': 0.35, 'lookback': 25, 'n_estimators': 15},
+                    {'model_type': 'xgboost', 'min_threshold': 0.001, 'confidence': 0.35, 'lookback': 25, 'n_estimators': 15},
+                ])
+            
+            # Расширяем временные сегменты для больших шансов на успех
+            if current_round > 3:
+                extended_segments.extend([
+                    ('2018-01-01', '2022-12-31'),  # Более длинный период
+                    ('2019-01-01', '2023-12-31'),  # Переходный период
+                ])
+            
+            # Проверяем прогресс
+            if best_result:
+                progress_info = (
+                    f"Раунд {current_round}, Попытка {attempt}: "
+                    f"Лучший результат {best_result['profit']:+.2f}% "
+                    f"({best_result['trades']} угод)"
+                )
+                print(f"📈 ПРОГРЕСС: {progress_info}")
+                
+                # Если мы близки к цели, продолжаем
+                close_to_target = (
+                    best_result['profit'] > TARGET_PROFIT * 0.1 or  # 10% от цели
+                    best_result['trades'] > MIN_TRADES * 0.5      # 50% от мин. угод
+                )
+                
+                if not close_to_target and current_round > 5:
+                    print(f"⚠️ После {current_round} раундов прогресс недостаточный")
+                    break
+    
+    # ФИНАЛЬНОЕ СОХРАНЕНИЕ ЛУЧШЕЙ МОДЕЛИ
+    if best_result:
+        print(f"\n🏁 ОБУЧЕНИЕ ЗАВЕРШЕНО ПОСЛЕ {attempt} ПОПЫТОК")
+        print(f"💎 ЛУЧШИЙ ДОСТИГНУТЫЙ РЕЗУЛЬТАТ:")
+        print(f"   💰 Прибуток: {best_result['profit']:+.2f}% (цель: ≥{TARGET_PROFIT}%)")
+        print(f"   📉 Просадка: {best_result['drawdown']:.2f}% (цель: <{TARGET_MAX_DRAWDOWN}%)")
+        print(f"   🎯 Вінрейт: {best_result['winrate']:.1%} (цель: ≥{TARGET_MIN_WINRATE:.0%})")
+        print(f"   📊 Угод: {best_result['trades']} (мін: {MIN_TRADES})")
+        
+        # АВТОМАТИЧЕСКИ СОХРАНЯЕМ ЛУЧШУЮ МОДЕЛЬ
+        model_path = best_result['trainer'].save_model()
+        print(f"🏆 ЛУЧШАЯ МОДЕЛЬ АВТОМАТИЧЕСКИ СОХРАНЕНА: {model_path}")
+        
+        return {
+            'success': False,  # Цели не достигнуты, но есть лучший результат
+            'best_result': best_result,
+            'total_attempts': attempt,
+            'model_path': model_path
+        }
+    else:
+        print(f"\n❌ Не удалось обучить ни одной модели за {attempt} попыток")
+        return {'success': False, 'error': 'no_models_trained'}
+
+
+def main():
+    """Главная функция MVP с выбором режима обучения."""
+    print_banner()
+    
+    # Проверяем зависимости
+    if not check_dependencies():
+        return
+    
+    print("\n🎯 РЕЖИМЫ ОБУЧЕНИЯ:")
+    print("   1. Стандартное обучение (одна попытка)")
+    print("   2. Итеративное обучение до достижения целей (рекомендуется)")
+    
+    choice = input("\nВыберите режим (1-2, по умолчанию 2): ").strip()
+    
+    if choice == '1':
+        # Стандартное обучение (старая версия)
+        standard_training()
+    else:
+        # Итеративное обучение (новая версия)  
+        iterative_segment_training()
+
+
+def standard_training():
+    """Стандартное обучение (одна попытка)."""
     # Показываем доступные данные
     show_available_data()
     
@@ -254,6 +669,13 @@ def main():
         else:
             print("⚠️ Модель не сохранена (доступна только в текущей сессии)")
         
+        # Предлагаем продолжить обучение для улучшения результатов
+        continue_choice = input(f"\n🔄 Продолжить обучение для улучшения модели? (y/n): ").lower()
+        if continue_choice in ['y', 'yes', 'да']:
+            print(f"\n🚀 Переходим к итеративному обучению...")
+            iterative_segment_training()
+            return
+        
         # Предлагаем кросс-валидацию
         cv_choice = input("\nВыполнить кросс-валидацию? (y/n): ").lower()
         if cv_choice in ['y', 'yes', 'да']:
@@ -322,10 +744,10 @@ def run_backtrader_backtest(trainer: MLTrainer, config: MLConfig) -> dict:
         cerebro.broker.setcash(initial_cash)
         cerebro.broker.setcommission(commission=0.001)  # 0.1% комиссия
         
-        # Создаем максимально простую торговую стратегию с ЛЕГЧАЙШИМИ критериями
+        # Создаем максимально простую торговую стратегию с БЫСТРОЙ оценкой
         class SimpleMLTradingStrategy(bt.Strategy):
             params = dict(
-                printlog=True,
+                printlog=False,  # ОТКЛЮЧАЕМ детальное логирование для скорости
                 position_size=0.95,  # 95% капитала - максимум
             )
             
