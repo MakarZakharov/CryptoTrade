@@ -1,0 +1,3 @@
+"""
+Market analysis module
+"""
