@@ -1,0 +1,38 @@
+{
+  "train_accuracy": 1.0,
+  "val_accuracy": 0.5097087378640777,
+  "val_precision": 0.5189299789895772,
+  "val_recall": 0.5097087378640777,
+  "val_f1": 0.511620543565423,
+  "test_accuracy": 0.587378640776699,
+  "test_precision": 0.6074044859907192,
+  "test_recall": 0.587378640776699,
+  "test_f1": 0.5871161033265039,
+  "test_confusion_matrix": [
+    [
+      60,
+      56
+    ],
+    [
+      29,
+      61
+    ]
+  ],
+  "test_true_negatives": 60,
+  "test_false_positives": 56,
+  "test_false_negatives": 29,
+  "test_true_positives": 61,
+  "test_specificity": 0.5172413793103449,
+  "test_sensitivity": 0.6777777777777778,
+  "experiment_name": "extended_11_random_forest_2019_2023",
+  "model_type": "random_forest",
+  "target_type": "direction",
+  "trained_at": "2025-07-12T18:50:18.816240",
+  "trading_total_return_pct": -1.742055164430076,
+  "trading_max_drawdown_pct": 3.76622725861088,
+  "trading_total_trades": 44,
+  "trading_win_rate": 0.587378640776699,
+  "trading_sharpe_ratio": 0,
+  "trading_final_balance": 9825.794483556992,
+  "trading_initial_balance": 10000.0
+}

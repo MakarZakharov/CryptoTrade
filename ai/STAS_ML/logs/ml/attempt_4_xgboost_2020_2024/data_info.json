@@ -1,0 +1,8 @@
+{
+  "train_samples": 1245,
+  "val_samples": 267,
+  "test_samples": 267,
+  "n_features": 255,
+  "target_type": "direction",
+  "prepared_at": "2025-07-12T18:57:57.110663"
+}

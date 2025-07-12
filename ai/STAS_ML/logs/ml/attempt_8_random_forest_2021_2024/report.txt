@@ -1,0 +1,45 @@
+============================================================
+ОТЧЕТ ПО ОБУЧЕНИЮ ML МОДЕЛИ
+============================================================
+Эксперимент: attempt_8_random_forest_2021_2024
+Дата: 2025-07-12 18:58:04
+
+КОНФИГУРАЦИЯ:
+  Символ: BTCUSDT
+  Таймфрейм: 1d
+  Модель: random_forest
+  Цель: direction
+  Lookback window: 10
+
+ДАННЫЕ:
+  Train samples: 992
+  Validation samples: 213
+  Test samples: 213
+  Features: 170
+
+МЕТРИКИ:
+  Train Accuracy: 0.7893
+  Val Accuracy: 0.4836
+  Test Accuracy: 0.5211
+  Test F1-score: 0.4612
+
+ТОРГОВЫЕ РЕЗУЛЬТАТЫ:
+  Начальный баланс: $10,000.00
+  Финальный баланс: $9,358.07
+  Общая доходность: -6.42%
+  Максимальная просадка: 6.98%
+  Количество сделок: 29
+  Процент выигрышных: 52.1%
+  Sharpe Ratio: 0.0000
+
+ТОП-10 ВАЖНЫХ ПРИЗНАКОВ:
+  1. price_change_lag_2: 0.0209
+  2. open_close_ratio_lag_2: 0.0203
+  3. volume_change_lag_2: 0.0193
+  4. quote_volume_lag_8: 0.0179
+  5. volume_change_lag_8: 0.0164
+  6. price_change_lag_6: 0.0156
+  7. macd_histogram_lag_5: 0.0149
+  8. volume_change_lag_7: 0.0147
+  9. rsi_14_lag_1: 0.0147
+  10. price_change_lag_9: 0.0141
