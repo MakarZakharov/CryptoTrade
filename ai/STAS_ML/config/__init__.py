@@ -1,3 +1,7 @@
 """
-Configuration module for STAS_ML trading system.
+Модуль конфигурации для STAS_ML.
 """
+
+from .ml_config import MLConfig, DataManager, create_ml_config_interactive
+
+__all__ = ['MLConfig', 'DataManager', 'create_ml_config_interactive']

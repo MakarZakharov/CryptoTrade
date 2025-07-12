@@ -1,0 +1,2 @@
+exchange,symbol,timeframe,model_type,target_type,prediction_horizon,lookback_window,train_split,validation_split,test_split,include_technical_indicators,indicator_periods,experiment_name,created_at
+binance,BTCUSDT,1d,random_forest,direction,1,50,0.7,0.15,0.15,True,"{'rsi': [14], 'macd': [12, 26, 9], 'atr': [14, 21]}",BTCUSDT_1d_random_forest_direction,2025-07-12T18:31:42.869786
