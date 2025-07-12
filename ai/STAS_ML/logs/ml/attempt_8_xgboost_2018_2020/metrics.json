@@ -1,0 +1,38 @@
+{
+  "train_accuracy": 0.918552036199095,
+  "val_accuracy": 0.5157894736842106,
+  "val_precision": 0.5525887890457851,
+  "val_recall": 0.5157894736842106,
+  "val_f1": 0.5288978094954901,
+  "test_accuracy": 0.5684210526315789,
+  "test_precision": 0.5736416512980564,
+  "test_recall": 0.5684210526315789,
+  "test_f1": 0.5704740955344529,
+  "test_confusion_matrix": [
+    [
+      34,
+      22
+    ],
+    [
+      19,
+      20
+    ]
+  ],
+  "test_true_negatives": 34,
+  "test_false_positives": 22,
+  "test_false_negatives": 19,
+  "test_true_positives": 20,
+  "test_specificity": 0.6071428571428571,
+  "test_sensitivity": 0.5128205128205128,
+  "experiment_name": "attempt_8_xgboost_2018_2020",
+  "model_type": "xgboost",
+  "target_type": "direction",
+  "trained_at": "2025-07-12T19:42:24.269596",
+  "trading_total_return_pct": -9.676157192587834,
+  "trading_max_drawdown_pct": 10.48699419682553,
+  "trading_total_trades": 25,
+  "trading_win_rate": 0.5684210526315789,
+  "trading_sharpe_ratio": 0,
+  "trading_final_balance": 9032.384280741217,
+  "trading_initial_balance": 10000.0
+}

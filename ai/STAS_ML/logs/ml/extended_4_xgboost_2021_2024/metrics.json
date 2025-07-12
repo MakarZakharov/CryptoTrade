@@ -27,12 +27,12 @@
   "experiment_name": "extended_4_xgboost_2021_2024",
   "model_type": "xgboost",
   "target_type": "direction",
-  "trained_at": "2025-07-12T18:59:10.518195",
-  "trading_total_return_pct": -2.9971003178097817,
-  "trading_max_drawdown_pct": 4.236307548254005,
+  "trained_at": "2025-07-12T19:22:41.115909",
+  "trading_total_return_pct": -7.003126027905783,
+  "trading_max_drawdown_pct": 7.37341705151375,
   "trading_total_trades": 36,
   "trading_win_rate": 0.5094339622641509,
   "trading_sharpe_ratio": 0,
-  "trading_final_balance": 9700.289968219022,
+  "trading_final_balance": 9299.687397209422,
   "trading_initial_balance": 10000.0
 }

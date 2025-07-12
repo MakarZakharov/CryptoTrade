@@ -1,38 +1,38 @@
 {
-  "train_accuracy": 0.7896879240162822,
-  "val_accuracy": 0.5063291139240507,
-  "val_precision": 0.4966819768866631,
-  "val_recall": 0.5063291139240507,
-  "val_f1": 0.48530409055221707,
-  "test_accuracy": 0.4430379746835443,
-  "test_precision": 0.43311683667830414,
-  "test_recall": 0.4430379746835443,
-  "test_f1": 0.43469088240689785,
+  "train_accuracy": 0.785234899328859,
+  "val_accuracy": 0.5,
+  "val_precision": 0.48039215686274517,
+  "val_recall": 0.5,
+  "val_f1": 0.4545454545454545,
+  "test_accuracy": 0.5,
+  "test_precision": 0.4839816933638444,
+  "test_recall": 0.5,
+  "test_f1": 0.4766666666666667,
   "test_confusion_matrix": [
     [
-      48,
-      37
+      60,
+      26
     ],
     [
-      51,
-      22
+      54,
+      20
     ]
   ],
-  "test_true_negatives": 48,
-  "test_false_positives": 37,
-  "test_false_negatives": 51,
-  "test_true_positives": 22,
-  "test_specificity": 0.5647058823529412,
-  "test_sensitivity": 0.3013698630136986,
+  "test_true_negatives": 60,
+  "test_false_positives": 26,
+  "test_false_negatives": 54,
+  "test_true_positives": 20,
+  "test_specificity": 0.6976744186046512,
+  "test_sensitivity": 0.2702702702702703,
   "experiment_name": "attempt_9_random_forest_2022_2024",
   "model_type": "random_forest",
   "target_type": "direction",
-  "trained_at": "2025-07-12T18:58:05.305625",
-  "trading_total_return_pct": -3.089031483550225,
-  "trading_max_drawdown_pct": 4.419786212161778,
-  "trading_total_trades": 36,
-  "trading_win_rate": 0.4430379746835443,
+  "trained_at": "2025-07-12T19:22:00.899267",
+  "trading_total_return_pct": -8.959551514609265,
+  "trading_max_drawdown_pct": 9.746955882456724,
+  "trading_total_trades": 26,
+  "trading_win_rate": 0.5,
   "trading_sharpe_ratio": 0,
-  "trading_final_balance": 9691.096851644978,
+  "trading_final_balance": 9104.044848539073,
   "trading_initial_balance": 10000.0
 }
