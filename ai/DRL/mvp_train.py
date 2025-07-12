@@ -100,6 +100,15 @@ def custom_config_menu():
     
     # Выбор пары
     available_pairs = DataManager.get_available_pairs()
+    
+    # Проверяем, есть ли доступные данные
+    if not available_pairs:
+        print("❌ Данные не найдены!")
+        print("💡 Убедитесь, что данные находятся в директории CryptoTrade/data/")
+        print("💡 Структура должна быть: CryptoTrade/data/{exchange}/{symbol}/{timeframe}/")
+        print("💡 Пример: CryptoTrade/data/binance/BTCUSDT/1d/2018_01_01-now.csv")
+        return None, None, None
+    
     print("\nДоступные биржи:")
     exchanges = list(available_pairs.keys())
     for i, exchange in enumerate(exchanges, 1):
@@ -200,16 +209,81 @@ def custom_config_menu():
 
 
 def main():
-    """Главная функция MVP - автоматический запуск."""
+    """Главная функция MVP с выбором режима обучения."""
     print_banner()
     
     # Проверяем зависимости
     if not check_dependencies():
         return
     
+    # Выбор режима обучения
+    print("🎯 Выберите режим обучения:")
+    print("   1. 🔥 Ультра-агрессивный (15мин, 300% годовых, <20% просадка)")
+    print("   2. 📈 Стандартный (1d, оптимизированный)")
+    print("   3. 🛠️ Интерактивный выбор")
+    
+    while True:
+        try:
+            mode_choice = int(input("Выберите режим (1-3): "))
+            if 1 <= mode_choice <= 3:
+                break
+        except ValueError:
+            pass
+        print("❌ Неверный выбор!")
+    
+    if mode_choice == 1:
+        # Ультра-агрессивный режим
+        print("\n🔥 УЛЬТРА-АГРЕССИВНЫЙ РЕЖИМ АКТИВИРОВАН")
+        print("💡 Запуск специализированного скрипта...")
+        print("💡 Команда: python CryptoTrade/ai/DRL/mvp_ultra_aggressive_train.py")
+        print("\n🚀 Для немедленного запуска выберите пару:")
+        print("   1. BTC Ultra-Aggressive")
+        print("   2. ETH Ultra-Aggressive")
+        print("   3. Полный интерактивный режим")
+        
+        ultra_choice = input("Выбор (1-3) или Enter для выхода: ").strip()
+        
+        if ultra_choice == "1":
+            try:
+                from CryptoTrade.ai.DRL.config.ultra_aggressive_config import BTCUltraConfig
+                from CryptoTrade.ai.DRL.mvp_ultra_aggressive_train import ultra_aggressive_training_session
+                config = BTCUltraConfig(initial_balance=100.0)
+                print("🟡 Запуск BTC ультра-агрессивного обучения...")
+                ultra_aggressive_training_session(config, 1000000)
+            except ImportError:
+                print("❌ Ультра-агрессивные модули недоступны")
+                return
+        elif ultra_choice == "2":
+            try:
+                from CryptoTrade.ai.DRL.config.ultra_aggressive_config import ETHUltraConfig
+                from CryptoTrade.ai.DRL.mvp_ultra_aggressive_train import ultra_aggressive_training_session
+                config = ETHUltraConfig(initial_balance=100.0)
+                print("🔷 Запуск ETH ультра-агрессивного обучения...")
+                ultra_aggressive_training_session(config, 1000000)
+            except ImportError:
+                print("❌ Ультра-агрессивные модули недоступны")
+                return
+        elif ultra_choice == "3":
+            print("💡 Запустите: python CryptoTrade/ai/DRL/mvp_ultra_aggressive_train.py")
+        return
+    
+    elif mode_choice == 3:
+        # Интерактивный режим
+        config, agent_type, timesteps = custom_config_menu()
+        if not config:
+            return
+    else:
+        # Стандартный режим
+        config, agent_type, timesteps = create_quick_config()
+        if not config:
+            # Пользователь отказался от быстрой настройки
+            config, agent_type, timesteps = custom_config_menu()
+            if not config:
+                return
+    
     # Спрашиваем у пользователя название модели
-    print("🏷️ Настройка имени модели:")
-    print("   1. Автоматическое имя (BTCUSDT_1d_optimized)")
+    print("\n🏷️ Настройка имени модели:")
+    print("   1. Автоматическое имя")
     print("   2. Пользовательское имя")
     
     custom_name = None
@@ -221,18 +295,8 @@ def main():
             print("⚠️ Пустое имя, используем автоматическое")
             custom_name = None
     
-    # Автоматическая конфигурация (BTCUSDT, 1d, PPO, optimized)
-    config = TradingConfig(
-        symbol='BTCUSDT',
-        timeframe='1d',
-        reward_scheme='optimized',
-        initial_balance=100.0
-    )
-    agent_type = "PPO"
-    timesteps = 1000000  # Увеличено до 1 миллиона шагов (~3-4 часа обучения)
-    
     # Показываем настройки
-    print(f"🚀 Автоматический запуск обучения:")
+    print(f"\n🚀 Запуск обучения:")
     print(f"   Пара: {config.symbol}")
     print(f"   Таймфрейм: {config.timeframe}")
     print(f"   Агент: {agent_type}")
@@ -267,6 +331,13 @@ def main():
                 episodes=5
             )
             print(f"✅ Оценка завершена!")
+            
+            # Предложение автоматической торговли для хороших результатов
+            if results and results.get('mean_return', 0) > 0.1:  # >10% доходность
+                print(f"\n🤖 Модель показывает хорошие результаты!")
+                print(f"💡 Для автоматической торговли 24/7:")
+                print(f"   python CryptoTrade/ai/DRL/automation/trading_bot_24_7.py")
+                
         except Exception as e:
             print(f"❌ Ошибка при оценке: {e}")
         

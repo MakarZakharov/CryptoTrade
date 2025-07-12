@@ -22,14 +22,110 @@ except ImportError as e:
     raise
 
 
-# Placeholder implementations
 class TechnicalIndicators:
-    """Placeholder for technical indicators."""
+    """Professional technical indicators using TALib library."""
     
     @staticmethod
     def add_all_indicators(data: pd.DataFrame, include: List[str] = None) -> pd.DataFrame:
-        """Add basic technical indicators to the data."""
+        """Add TALib-based technical indicators to the data."""
+        try:
+            import talib
+        except ImportError:
+            print("⚠️ TALib не установлен! Установите: pip install TA-Lib")
+            return TechnicalIndicators._fallback_indicators(data, include)
+        
         df = data.copy()
+        
+        # Конвертируем в numpy массивы для TALib
+        high = df['high'].values.astype(float)
+        low = df['low'].values.astype(float)
+        close = df['close'].values.astype(float)
+        volume = df['volume'].values.astype(float)
+        
+        # Moving Averages - более точные реализации
+        df['sma_5'] = talib.SMA(close, timeperiod=5)
+        df['sma_20'] = talib.SMA(close, timeperiod=20)
+        df['sma_50'] = talib.SMA(close, timeperiod=50)
+        
+        df['ema_5'] = talib.EMA(close, timeperiod=5)
+        df['ema_20'] = talib.EMA(close, timeperiod=20)
+        df['ema_50'] = talib.EMA(close, timeperiod=50)
+        
+        # Oscillators - профессиональные реализации
+        df['rsi_14'] = talib.RSI(close, timeperiod=14)
+        
+        # MACD с правильными параметрами
+        macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+        df['macd'] = macd
+        df['macd_signal'] = macd_signal
+        df['macd_histogram'] = macd_hist
+        
+        # Bollinger Bands
+        bb_upper, bb_middle, bb_lower = talib.BBANDS(close, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
+        df['bb_upper'] = bb_upper
+        df['bb_middle'] = bb_middle
+        df['bb_lower'] = bb_lower
+        
+        # Volatility indicators
+        df['atr_14'] = talib.ATR(high, low, close, timeperiod=14)
+        
+        # Дополнительные полезные индикаторы для торговли
+        if include is None or 'adx' in include:
+            df['adx_14'] = talib.ADX(high, low, close, timeperiod=14)
+        
+        if include is None or 'momentum' in include:
+            df['momentum_5'] = talib.MOM(close, timeperiod=5)
+            df['momentum_10'] = talib.MOM(close, timeperiod=10)
+            df['momentum_20'] = talib.MOM(close, timeperiod=20)
+        
+        if include is None or 'stochastic' in include:
+            slowk, slowd = talib.STOCH(high, low, close, fastk_period=14, slowk_period=3, slowd_period=3)
+            df['stoch_k'] = slowk
+            df['stoch_d'] = slowd
+        
+        if include is None or 'williams_r' in include:
+            df['williams_r_14'] = talib.WILLR(high, low, close, timeperiod=14)
+        
+        if include is None or 'obv' in include:
+            df['obv'] = talib.OBV(close, volume)
+        
+        # Ichimoku components
+        if include is None or 'ichimoku' in include:
+            # Tenkan-sen (Conversion Line): (9-period high + 9-period low)/2
+            period9_high = talib.MAX(high, timeperiod=9)
+            period9_low = talib.MIN(low, timeperiod=9)
+            df['tenkan_sen'] = (period9_high + period9_low) / 2
+            
+            # Kijun-sen (Base Line): (26-period high + 26-period low)/2
+            period26_high = talib.MAX(high, timeperiod=26)
+            period26_low = talib.MIN(low, timeperiod=26)
+            df['kijun_sen'] = (period26_high + period26_low) / 2
+        
+        # VWAP (Volume Weighted Average Price)
+        if include is None or 'vwap' in include:
+            df['vwap'] = TechnicalIndicators._calculate_vwap(df)
+        
+        # Price patterns
+        if include is None or 'patterns' in include:
+            # Doji candlestick pattern
+            df['doji'] = talib.CDLDOJI(df['open'].values, high, low, close)
+            # Hammer pattern
+            df['hammer'] = talib.CDLHAMMER(df['open'].values, high, low, close)
+        
+        return df
+    
+    @staticmethod
+    def _calculate_vwap(df: pd.DataFrame) -> pd.Series:
+        """Рассчитать VWAP (Volume Weighted Average Price)."""
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        return (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
+    
+    @staticmethod
+    def _fallback_indicators(data: pd.DataFrame, include: List[str] = None) -> pd.DataFrame:
+        """Fallback реализация без TALib (упрощенная)."""
+        df = data.copy()
+        
+        print("🔧 Используются упрощенные индикаторы (рекомендуется установить TALib)")
         
         # Simple Moving Averages
         df['sma_5'] = df['close'].rolling(5).mean()
@@ -41,7 +137,7 @@ class TechnicalIndicators:
         df['ema_20'] = df['close'].ewm(span=20).mean()
         df['ema_50'] = df['close'].ewm(span=50).mean()
         
-        # RSI
+        # RSI (упрощенная версия)
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -264,7 +360,7 @@ class TradingEnv(gym.Env):
             self.reward_scheme = create_optimized_reward_scheme()
         elif self.config.reward_scheme == 'custom' and self.config.custom_reward_weights:
             # Создаем кастомную схему на основе весов
-            from ai.DRL.environment.reward_schemes import (
+            from CryptoTrade.ai.DRL.environment.reward_schemes import (
                 ProfitReward, DrawdownPenalty, SharpeRatioReward, 
                 TradeQualityReward, VolatilityPenalty, ConsistencyReward
             )
