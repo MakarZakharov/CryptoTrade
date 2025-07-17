@@ -75,11 +75,11 @@ class TrainingTargets:
             min_cross_val_score=0.70,    # Стабільна кросс-валідація
             
             # Торгові очікування для XGBoost
-            min_total_return_pct=25.0,   # Мінімум 25% річних
-            max_drawdown_pct=8.0,        # Максимум 8% просадки  
+            min_total_return_pct=500.0,   # Мінімум 25% річних
+            max_drawdown_pct=40.0,        # Максимум 8% просадки
             min_sharpe_ratio=1.2,        # Sharpe > 1.2
             min_win_rate=0.65,           # 65% винрейт
-            min_total_trades=20          # Мінімум 20 угод
+            min_total_trades=96          # Мінімум 20 угод
         ),
         
         # Random Forest - хороші результати

@@ -27,12 +27,12 @@
   "experiment_name": "attempt_8_random_forest_2021_2024",
   "model_type": "random_forest",
   "target_type": "direction",
-  "trained_at": "2025-07-12T18:58:03.999912",
-  "trading_total_return_pct": -6.419334300010851,
-  "trading_max_drawdown_pct": 6.984407904044582,
+  "trained_at": "2025-07-12T19:21:59.722897",
+  "trading_total_return_pct": -5.727730859542789,
+  "trading_max_drawdown_pct": 5.940899638289174,
   "trading_total_trades": 29,
   "trading_win_rate": 0.5211267605633803,
   "trading_sharpe_ratio": 0,
-  "trading_final_balance": 9358.066569998915,
+  "trading_final_balance": 9427.226914045721,
   "trading_initial_balance": 10000.0
 }
