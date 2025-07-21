@@ -1,9 +1,20 @@
-"""
-Модуль обучения DRL агентов для торговли криптовалютой.
+"""Система обучения DRL агентов."""
 
-Включает:
-- Основные скрипты обучения
-- Управление экспериментами
-- Callback функции для мониторинга
-- Оптимизация гиперпараметров
-"""
+from .trainer import Trainer
+from .experiment_manager import ExperimentManager
+
+# Callbacks будут добавлены позже
+try:
+    from .callbacks import TradingCallback, EvaluationCallback, CheckpointCallback
+    __all__ = [
+        'Trainer',
+        'ExperimentManager', 
+        'TradingCallback',
+        'EvaluationCallback',
+        'CheckpointCallback'
+    ]
+except ImportError:
+    __all__ = [
+        'Trainer',
+        'ExperimentManager'
+    ]

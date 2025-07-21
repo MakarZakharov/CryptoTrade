@@ -1,0 +1,65 @@
+{
+  "experiment_name": "ppo_BTCUSDT_1d_ppo",
+  "agent_type": "PPO",
+  "trading_config": {
+    "symbol": "BTCUSDT",
+    "timeframe": "1d",
+    "initial_balance": 10000.0,
+    "reward_scheme": "profit_based"
+  },
+  "drl_config": {
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "verbose": 1,
+    "seed": 42,
+    "device": "cuda",
+    "n_steps": 512,
+    "batch_size": 64,
+    "n_epochs": 5,
+    "clip_range": 0.2,
+    "ent_coef": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "use_sde": false,
+    "gae_lambda": 0.95,
+    "policy_kwargs": {
+      "net_arch": [
+        64,
+        64
+      ],
+      "activation_fn": "<class 'torch.nn.modules.activation.ReLU'>",
+      "normalize_images": false,
+      "optimizer_class": "<class 'torch.optim.adam.Adam'>",
+      "optimizer_kwargs": {
+        "eps": 1e-05
+      },
+      "log_std_init": 0.0,
+      "ortho_init": true
+    }
+  },
+  "training_stats": {
+    "total_timesteps": 50000,
+    "episodes": 0,
+    "best_reward": -Infinity,
+    "best_model_path": null,
+    "training_time": 191.05714511871338,
+    "evaluation_rewards": [
+      0.10600000000000008,
+      0.10600000000000008,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015,
+      0.20100000000000015
+    ],
+    "learning_curve": []
+  },
+  "created_at": "2025-07-20T11:51:52.548746",
+  "model_class": "PPOAgent"
+}

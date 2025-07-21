@@ -1,9 +1,10 @@
-"""
-Модуль оценки и бэктестинга для DRL торговых агентов.
+"""Модули оценки и тестирования DRL агентов."""
 
-Включает:
-- Бэктестинг на исторических данных
-- Расчет финансовых метрик
-- Сравнение с бенчмарками
-- Визуализация результатов
-"""
+from .backtest import DRLBacktester, run_quick_backtest
+from .visualizer import BacktestVisualizer
+
+__all__ = [
+    'DRLBacktester',
+    'run_quick_backtest', 
+    'BacktestVisualizer'
+]

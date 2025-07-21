@@ -1,0 +1,16 @@
+backtrader>=1.9.76.123
+pandas>=1.5.0
+matplotlib>=3.5.0
+numpy>=1.21.0
+
+# STAS_RL Dependencies
+torch>=1.12.0
+stable-baselines3>=1.6.0
+tensorboard>=2.8.0
+gymnasium>=0.26.0
+scikit-learn>=1.1.0
+seaborn>=0.11.0
+
+# Additional utilities
+tqdm>=4.64.0
+psutil>=5.9.0

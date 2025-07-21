@@ -1,289 +1,398 @@
-"""
-PPO (Proximal Policy Optimization) агент для торговли криптовалютой.
-"""
+"""PPO агент для торговли криптовалютами."""
 
-import os
-import numpy as np
-from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
 import time
+from typing import Dict, Any, Optional, Union
+import torch
+import numpy as np
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv
+from stable_baselines3.common.policies import ActorCriticPolicy
 
 from .base_agent import BaseAgent
-
-
-class TradingCallback(BaseCallback):
-    """Callback для мониторинга обучения торгового агента."""
-    
-    def __init__(self, eval_freq: int = 10000, n_eval_episodes: int = 5, verbose: int = 1):
-        super().__init__(verbose)
-        self.eval_freq = eval_freq
-        self.n_eval_episodes = n_eval_episodes
-        self.best_mean_reward = -np.inf
-        
-    def _on_step(self) -> bool:
-        if self.n_calls % self.eval_freq == 0:
-            # Оценка производительности
-            episode_rewards = []
-            for _ in range(self.n_eval_episodes):
-                obs = self.training_env.reset()
-                episode_reward = 0
-                done = False
-                while not done:
-                    action, _ = self.model.predict(obs, deterministic=True)
-                    obs, reward, done, info = self.training_env.step(action)
-                    episode_reward += reward
-                episode_rewards.append(episode_reward)
-            
-            mean_reward = np.mean(episode_rewards)
-            
-            if mean_reward > self.best_mean_reward:
-                self.best_mean_reward = mean_reward
-                if self.verbose > 0:
-                    print(f"Новый лучший результат: {mean_reward:.2f}")
-            
-            if self.verbose > 0:
-                print(f"Шаг {self.n_calls}: Средняя награда = {mean_reward:.2f}")
-        
-        return True
+from ..config import DRLConfig, TradingConfig
+from ..utils import DRLLogger
+from ..environments import TradingEnv
 
 
 class PPOAgent(BaseAgent):
-    """PPO агент для торговли криптовалютой."""
+    """
+    PPO (Proximal Policy Optimization) агент для торговли.
     
-    def __init__(self, env, config: Dict[str, Any] = None):
-        super().__init__(env, config)
-        self.vec_env = None
+    Реализует алгоритм PPO с настройками, оптимизированными для
+    торговли криптовалютами. Поддерживает continuous и discrete
+    action spaces, а также различные архитектуры нейронных сетей.
+    """
+    
+    def __init__(
+        self, 
+        drl_config: DRLConfig, 
+        trading_config: TradingConfig,
+        logger: Optional[DRLLogger] = None
+    ):
+        """
+        Инициализация PPO агента.
         
-    def create_model(self, **kwargs):
-        """Создание PPO модели."""
-        # Оборачиваем среду в векторизованную среду
-        self.vec_env = DummyVecEnv([lambda: self.env])
+        Args:
+            drl_config: конфигурация DRL параметров
+            trading_config: конфигурация торговых параметров
+            logger: логгер для записи операций
+        """
+        super().__init__(drl_config, trading_config, logger)
         
-        # Параметры модели
-        model_params = {
-            'policy': 'MlpPolicy',
-            'env': self.vec_env,
-            'learning_rate': self.config.get('learning_rate', 3e-4),
-            'n_steps': self.config.get('n_steps', 2048),
-            'batch_size': self.config.get('batch_size', 64),
-            'n_epochs': self.config.get('n_epochs', 10),
-            'gamma': self.config.get('gamma', 0.99),
-            'gae_lambda': self.config.get('gae_lambda', 0.95),
-            'clip_range': self.config.get('clip_range', 0.2),
-            'ent_coef': self.config.get('ent_coef', 0.01),
-            'vf_coef': self.config.get('vf_coef', 0.5),
-            'max_grad_norm': self.config.get('max_grad_norm', 0.5),
-            'verbose': self.config.get('verbose', 1),
-            'tensorboard_log': self.config.get('tensorboard_log', None),
-            **kwargs
+        # PPO специфичные параметры
+        self.policy_kwargs = self._build_policy_kwargs()
+        
+        # Предупреждаем о выборе устройства
+        self._warn_about_device_selection()
+        
+        self.logger.info(f"PPO агент инициализирован с устройством: {self.device}")
+    
+
+    
+    def _build_policy_kwargs(self) -> Dict[str, Any]:
+        """Построение параметров политики."""
+        policy_kwargs = {
+            "net_arch": self.drl_config.net_arch.copy(),
+            "activation_fn": self._get_activation_function(),
+            "normalize_images": False,
+            "optimizer_class": torch.optim.Adam,
+            "optimizer_kwargs": {
+                "eps": 1e-5
+            }
         }
         
-        # Создание модели
-        self.model = PPO(**model_params)
+        # LSTM поддержка
+        if self.drl_config.use_lstm:
+            policy_kwargs["net_arch"].append(dict(
+                pi=[self.drl_config.lstm_hidden_size],
+                vf=[self.drl_config.lstm_hidden_size]
+            ))
+            policy_kwargs["enable_critic_lstm"] = True
+            policy_kwargs["lstm_hidden_size"] = self.drl_config.lstm_hidden_size
         
-        self.logger.info("PPO модель создана успешно")
-        self.logger.info(f"Параметры: {model_params}")
+        # Настройки для continuous action space
+        if self.trading_config.action_type == "continuous":
+            # Инициализация log_std для контроля исследования
+            policy_kwargs["log_std_init"] = 0.0  # std = exp(0) = 1.0
+            policy_kwargs["ortho_init"] = True
+            
+            if self.drl_config.use_sde:
+                policy_kwargs["sde_sample_freq"] = 4
+        
+        self.logger.debug(f"Policy kwargs: {policy_kwargs}")
+        return policy_kwargs
+    
+    def _get_activation_function(self):
+        """Получение функции активации."""
+        activation_map = {
+            "relu": torch.nn.ReLU,
+            "tanh": torch.nn.Tanh,
+            "elu": torch.nn.ELU,
+            "leaky_relu": torch.nn.LeakyReLU,
+            "swish": torch.nn.SiLU
+        }
+        
+        return activation_map.get(self.drl_config.activation_fn, torch.nn.ReLU)
+    
+    def create_model(
+        self, 
+        env: Union[TradingEnv, VecEnv], 
+        **kwargs
+    ) -> PPO:
+        """
+        Создание PPO модели.
+        
+        Args:
+            env: торговая среда
+            **kwargs: дополнительные параметры
+            
+        Returns:
+            Созданная PPO модель
+        """
+        # Подготовка среды
+        if not isinstance(env, VecEnv):
+            env = DummyVecEnv([lambda: env])
+        
+        self.training_env = env
+        
+        # Получение параметров PPO
+        ppo_params = self._get_ppo_parameters()
+        ppo_params.update(kwargs)  # Переопределение параметрами из kwargs
+        
+        # Создание модели
+        self.model = PPO(
+            policy="MlpPolicy",
+            env=env,
+            device=self.device,
+            policy_kwargs=self.policy_kwargs,
+            **ppo_params
+        )
+        
+        self.logger.info("PPO модель создана")
+        self.logger.debug(f"Параметры PPO: {ppo_params}")
         
         return self.model
     
-    def train(self, total_timesteps: int, **kwargs):
-        """Обучение PPO агента."""
-        if self.model is None:
-            self.create_model()
+    def _get_ppo_parameters(self) -> Dict[str, Any]:
+        """Получение параметров PPO из конфигурации."""
+        return {
+            "learning_rate": self.drl_config.learning_rate,
+            "n_steps": self.drl_config.n_steps,
+            "batch_size": self.drl_config.batch_size,
+            "n_epochs": self.drl_config.n_epochs,
+            "gamma": self.drl_config.gamma,
+            "gae_lambda": self.drl_config.gae_lambda,
+            "clip_range": self.drl_config.clip_range,
+            "ent_coef": self.drl_config.ent_coef,
+            "vf_coef": self.drl_config.vf_coef,
+            "max_grad_norm": self.drl_config.max_grad_norm,
+            "use_sde": self.drl_config.use_sde,
+            "verbose": self.drl_config.verbose,
+            "seed": self.drl_config.seed,
+            "tensorboard_log": None
+        }
+    
+    def train(
+        self, 
+        total_timesteps: int,
+        callback=None,
+        **kwargs
+    ) -> PPO:
+        """
+        Обучение PPO агента.
         
+        Args:
+            total_timesteps: общее количество шагов обучения
+            callback: callback функции для мониторинга
+            **kwargs: дополнительные параметры
+            
+        Returns:
+            Обученная PPO модель
+        """
+        if self.model is None:
+            raise ValueError("Модель не создана. Вызовите create_model() сначала.")
+        
+        self.logger.info(f"Начинаем обучение PPO на {total_timesteps:,} шагов")
+        
+        # Засекаем время
         start_time = time.time()
         
-        # Callback для мониторинга
-        eval_freq = kwargs.get('eval_freq', 10000)
-        callback = TradingCallback(eval_freq=eval_freq)
-        
-        self.logger.info(f"Начало обучения PPO на {total_timesteps} шагов")
-        
         try:
-            # Фильтруем неподдерживаемые параметры
-            supported_kwargs = {k: v for k, v in kwargs.items() 
-                              if k not in ['eval_freq', 'n_eval_episodes', 'eval_log_path']}
-            
-            # Обучение модели
+            # Основное обучение
             self.model.learn(
                 total_timesteps=total_timesteps,
                 callback=callback,
-                **supported_kwargs
+                **kwargs
             )
             
             training_time = time.time() - start_time
             
-            # Обновление статистики
+            # Обновляем статистику
             self.update_training_stats(
-                total_timesteps=total_timesteps,
-                training_time=training_time,
-                best_reward=callback.best_mean_reward
+                timesteps=total_timesteps,
+                training_time=training_time
             )
             
             self.logger.info(f"Обучение завершено за {training_time:.2f} секунд")
-            self.logger.info(f"Лучшая средняя награда: {callback.best_mean_reward:.2f}")
             
         except Exception as e:
-            self.logger.error(f"Ошибка при обучении: {e}")
+            self.logger.error(f"Ошибка во время обучения: {e}")
             raise
         
         return self.model
     
-    def predict(self, observation: np.ndarray, deterministic: bool = True) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """Предсказание действия PPO агентом."""
-        if self.model is None:
-            raise ValueError("Модель не создана. Сначала создайте или загрузите модель.")
+    def predict(
+        self, 
+        observation: np.ndarray,
+        deterministic: bool = True
+    ) -> Union[int, np.ndarray]:
+        """
+        Предсказание действия с дополнительной обработкой для торговли.
         
-        return self.model.predict(observation, deterministic=deterministic)
-    
-    def save(self, path: str):
-        """Сохранение PPO модели."""
-        if self.model is None:
-            raise ValueError("Модель не создана. Нечего сохранять.")
-        
-        # Создание директории если не существует
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        
-        # Сохранение модели
-        self.model.save(path)
-        
-        # Сохранение статистики обучения
-        stats_path = path + "_stats.json"
-        import json
-        with open(stats_path, 'w') as f:
-            json.dump(self.training_stats, f, indent=2)
-        
-        self.logger.info(f"Модель сохранена: {path}")
-    
-    def load(self, path: str):
-        """Загрузка PPO модели."""
-        try:
-            # Загрузка модели
-            self.model = PPO.load(path, env=self.vec_env)
+        Args:
+            observation: наблюдение из среды
+            deterministic: использовать детерминистичную политику
             
-            # Загрузка статистики если существует
-            stats_path = path + "_stats.json"
-            if os.path.exists(stats_path):
-                import json
-                with open(stats_path, 'r') as f:
-                    self.training_stats = json.load(f)
-            
-            self.logger.info(f"Модель загружена: {path}")
-            
-        except Exception as e:
-            self.logger.error(f"Ошибка загрузки модели: {e}")
-            raise
-    
-    def fine_tune(self, additional_timesteps: int, **kwargs):
-        """Дообучение модели на дополнительных данных."""
+        Returns:
+            Предсказанное действие
+        """
         if self.model is None:
-            raise ValueError("Модель не создана. Сначала создайте или загрузите модель.")
+            raise ValueError("Модель не создана.")
         
-        self.logger.info(f"Дообучение на {additional_timesteps} дополнительных шагов")
+        action, _ = self.model.predict(observation, deterministic=deterministic)
         
-        # Дообучение
-        start_time = time.time()
-        self.model.learn(total_timesteps=additional_timesteps, **kwargs)
-        training_time = time.time() - start_time
+        # Дополнительная обработка для continuous действий
+        if self.trading_config.action_type == "continuous":
+            # Применяем границы действий
+            action = np.clip(
+                action, 
+                self.trading_config.action_bounds[0],
+                self.trading_config.action_bounds[1]
+            )
+            
+            # Применяем мертвую зону для уменьшения шума
+            dead_zone = 0.05
+            if abs(action[0]) < dead_zone:
+                action = np.array([0.0])
         
-        # Обновление статистики
-        self.training_stats['total_timesteps'] += additional_timesteps
-        self.training_stats['training_time'] += training_time
-        
-        self.logger.info(f"Дообучение завершено за {training_time:.2f} секунд")
+        return action
     
-    def get_policy_info(self) -> Dict[str, Any]:
-        """Получение информации о политике агента."""
+    def get_policy_statistics(self) -> Dict[str, Any]:
+        """Получение статистики политики."""
+        if self.model is None or not hasattr(self.model, 'policy'):
+            return {}
+        
+        stats = {}
+        
+        # Статистика для continuous политик
+        if hasattr(self.model.policy, 'log_std') and self.model.policy.log_std is not None:
+            with torch.no_grad():
+                log_std = self.model.policy.log_std.cpu().numpy()
+                std = np.exp(log_std)
+                
+                stats.update({
+                    'log_std_mean': float(np.mean(log_std)),
+                    'log_std_std': float(np.std(log_std)),
+                    'std_mean': float(np.mean(std)),
+                    'std_min': float(np.min(std)),
+                    'std_max': float(np.max(std))
+                })
+        
+        # Статистика параметров сети
+        if hasattr(self.model.policy, 'mlp_extractor'):
+            total_params = sum(p.numel() for p in self.model.policy.parameters())
+            trainable_params = sum(p.numel() for p in self.model.policy.parameters() if p.requires_grad)
+            
+            stats.update({
+                'total_parameters': total_params,
+                'trainable_parameters': trainable_params
+            })
+        
+        return stats
+    
+    def adjust_exploration(self, factor: float = 1.0):
+        """
+        Корректировка уровня исследования (exploration).
+        
+        Args:
+            factor: фактор корректировки (>1 увеличивает исследование)
+        """
+        if self.model is None or not hasattr(self.model.policy, 'log_std'):
+            self.logger.warning("Невозможно скорректировать исследование")
+            return
+        
+        with torch.no_grad():
+            current_log_std = self.model.policy.log_std.clone()
+            new_log_std = current_log_std + np.log(factor)
+            
+            # Ограничиваем разумными пределами
+            new_log_std = torch.clamp(new_log_std, -2.0, 1.0)  # std от ~0.14 до ~2.7
+            
+            self.model.policy.log_std.copy_(new_log_std)
+            
+            self.logger.info(f"Исследование скорректировано на фактор {factor:.3f}")
+    
+    def get_action_distribution(self, observation: np.ndarray) -> Dict[str, Any]:
+        """
+        Получение распределения действий для анализа.
+        
+        Args:
+            observation: наблюдение из среды
+            
+        Returns:
+            Статистика распределения действий
+        """
         if self.model is None:
             return {}
         
-        try:
-            # Получение параметров сети
-            policy_net = self.model.policy
+        with torch.no_grad():
+            obs_tensor = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
             
-            info = {
-                'policy_class': str(type(policy_net)),
-                'action_space': str(self.env.action_space),
-                'observation_space': str(self.env.observation_space),
-                'learning_rate': self.model.learning_rate,
-                'gamma': self.model.gamma,
-                'n_steps': self.model.n_steps,
-                'batch_size': self.model.batch_size
-            }
-            
-            # Добавляем информацию о слоях если возможно
-            if hasattr(policy_net, 'mlp_extractor'):
-                info['network_architecture'] = str(policy_net.mlp_extractor)
-            
-            return info
-            
-        except Exception as e:
-            self.logger.error(f"Ошибка получения информации о политике: {e}")
-            return {}
-
-
-def create_ppo_agent(env, config: Dict[str, Any] = None) -> PPOAgent:
-    """Удобная функция для создания PPO агента."""
-    from .base_agent import get_default_config
+            # Получаем распределение от политики
+            if hasattr(self.model.policy, 'get_distribution'):
+                distribution = self.model.policy.get_distribution(obs_tensor)
+                
+                if hasattr(distribution, 'distribution'):
+                    dist = distribution.distribution
+                    
+                    if hasattr(dist, 'loc') and hasattr(dist, 'scale'):
+                        # Normal distribution (continuous)
+                        return {
+                            'mean': float(dist.loc.cpu().numpy()[0]),
+                            'std': float(dist.scale.cpu().numpy()[0]),
+                            'type': 'normal'
+                        }
+                    elif hasattr(dist, 'probs'):
+                        # Categorical distribution (discrete)
+                        probs = dist.probs.cpu().numpy()[0]
+                        return {
+                            'probabilities': probs.tolist(),
+                            'entropy': float(-np.sum(probs * np.log(probs + 1e-8))),
+                            'type': 'categorical'
+                        }
+        
+        return {}
     
-    if config is None:
-        config = get_default_config('PPO')
+    def save_policy_only(self, path: str):
+        """
+        Сохранение только политики (для deployment).
+        
+        Args:
+            path: путь для сохранения политики
+        """
+        if self.model is None or not hasattr(self.model, 'policy'):
+            raise ValueError("Модель или политика не найдена")
+        
+        torch.save({
+            'policy_state_dict': self.model.policy.state_dict(),
+            'policy_kwargs': self.policy_kwargs,
+            'action_space': self.training_env.action_space if self.training_env else None,
+            'observation_space': self.training_env.observation_space if self.training_env else None
+        }, path)
+        
+        self.logger.info(f"Политика сохранена: {path}")
     
-    return PPOAgent(env, config)
-
-
-def main():
-    """Пример использования PPO агента."""
-    import sys
-    import os
-    
-    # Добавляем путь к модулям
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-    
-    from environment.trading_env import create_trading_environment, TradingConfig
-    import pandas as pd
-    import numpy as np
-    
-    # Создание тестовых данных
-    np.random.seed(42)
-    test_data = pd.DataFrame({
-        'open': np.random.randn(1000).cumsum() + 100,
-        'high': np.random.randn(1000).cumsum() + 102,
-        'low': np.random.randn(1000).cumsum() + 98,
-        'close': np.random.randn(1000).cumsum() + 100,
-        'volume': np.random.randint(1000, 10000, 1000)
-    })
-    
-    # Обеспечение логичности OHLC данных
-    test_data['high'] = test_data[['open', 'high', 'close']].max(axis=1)
-    test_data['low'] = test_data[['open', 'low', 'close']].min(axis=1)
-    
-    # Создание среды
-    config = TradingConfig(initial_balance=10000.0, lookback_window=20)
-    env = create_trading_environment(test_data, config)
-    
-    # Создание PPO агента
-    agent = create_ppo_agent(env)
-    
-    print("Создание модели...")
-    agent.create_model()
-    
-    print("Обучение агента...")
-    agent.train(total_timesteps=10000)
-    
-    print("Оценка производительности...")
-    eval_results = agent.evaluate(n_episodes=5)
-    print(f"Средняя награда: {eval_results['mean_reward']:.2f}")
-    
-    print("Сохранение модели...")
-    agent.save("models/ppo_trading_agent")
-    
-    print("Тест завершен!")
-
-
-if __name__ == "__main__":
-    main()
+    def load_policy_only(self, path: str, env: Optional[Union[TradingEnv, VecEnv]] = None):
+        """
+        Загрузка только политики.
+        
+        Args:
+            path: путь к сохраненной политике
+            env: среда (если нужно)
+        """
+        if not torch.cuda.is_available() and self.device == "cuda":
+            map_location = torch.device('cpu')
+        else:
+            map_location = None
+        
+        checkpoint = torch.load(path, map_location=map_location)
+        
+        # Создаем минимальную модель если её нет
+        if self.model is None and env is not None:
+            self.create_model(env)
+        
+        if self.model is not None:
+            self.model.policy.load_state_dict(checkpoint['policy_state_dict'])
+            self.logger.info(f"Политика загружена: {path}")
+        
+    def get_hyperparameters(self) -> Dict[str, Any]:
+        """Получение всех гиперпараметров PPO."""
+        base_params = super().get_hyperparameters()
+        
+        ppo_specific = {
+            'n_steps': self.drl_config.n_steps,
+            'batch_size': self.drl_config.batch_size,
+            'n_epochs': self.drl_config.n_epochs,
+            'clip_range': self.drl_config.clip_range,
+            'ent_coef': self.drl_config.ent_coef,
+            'vf_coef': self.drl_config.vf_coef,
+            'max_grad_norm': self.drl_config.max_grad_norm,
+            'gae_lambda': self.drl_config.gae_lambda,
+            'use_sde': self.drl_config.use_sde,
+            'policy_kwargs': self.policy_kwargs,
+            'device': self.device
+        }
+        
+        base_params.update(ppo_specific)
+        return base_params
