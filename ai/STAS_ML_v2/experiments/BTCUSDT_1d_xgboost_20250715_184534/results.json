@@ -1,0 +1,6 @@
+{
+  "experiment_name": "BTCUSDT_1d_xgboost_20250715_184534",
+  "timestamp": "2025-07-15T18:45:37.707110",
+  "error": "XGBClassifier.fit() got an unexpected keyword argument 'early_stopping_rounds'",
+  "status": "failed"
+}

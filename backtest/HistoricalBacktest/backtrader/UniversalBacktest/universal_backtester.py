@@ -691,7 +691,7 @@ class UniversalBacktester:
                            strategy_name: str,
                            exchange: str = "binance",
                            symbol: str = "BTCUSDT",
-                           timeframe: str = "1d",
+                           timeframe: str = "15m",
                            start_date: str = None,
                            end_date: str = None,
                            strategy_params: Dict[str, Any] = None,
@@ -793,7 +793,7 @@ class UniversalBacktester:
                           strategy_names: List[str] = None,
                           exchange: str = "binance",
                           symbol: str = "BTCUSDT",
-                          timeframe: str = "1d",
+                          timeframe: str = "15m",
                           start_date: str = None,
                           end_date: str = None,
                           custom_params: Dict[str, Dict[str, Any]] = None,
@@ -954,7 +954,7 @@ if __name__ == "__main__":
         strategy_name="RSIStrategy",
         exchange="binance",
         symbol="BTCUSDT",
-        timeframe="1d"
+        timeframe="15m"
     )
 
 

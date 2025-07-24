@@ -1,0 +1,2 @@
+experiment_name,timestamp,error,status
+BTCUSDT_1d_xgboost_20250715_184534,2025-07-15T18:45:37.707110,XGBClassifier.fit() got an unexpected keyword argument 'early_stopping_rounds',failed
