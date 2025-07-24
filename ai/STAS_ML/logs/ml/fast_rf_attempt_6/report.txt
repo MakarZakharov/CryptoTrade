@@ -1,0 +1,45 @@
+============================================================
+ОТЧЕТ ПО ОБУЧЕНИЮ ML МОДЕЛИ
+============================================================
+Эксперимент: fast_rf_attempt_6
+Дата: 2025-07-12 21:15:26
+
+КОНФИГУРАЦИЯ:
+  Символ: BTCUSDT
+  Таймфрейм: 1d
+  Модель: random_forest
+  Цель: direction
+  Lookback window: 15
+
+ДАННЫЕ:
+  Train samples: 722
+  Validation samples: 155
+  Test samples: 155
+  Features: 405
+
+МЕТРИКИ:
+  Train Accuracy: 1.0000
+  Val Accuracy: 0.5935
+  Test Accuracy: 0.5871
+  Test F1-score: 0.4456
+
+ТОРГОВЫЕ РЕЗУЛЬТАТЫ:
+  Начальный баланс: $10,000.00
+  Финальный баланс: $9,924.68
+  Общая доходность: -0.75%
+  Максимальная просадка: 0.75%
+  Количество сделок: 2
+  Процент выигрышных: 58.7%
+  Sharpe Ratio: 0.0000
+
+ТОП-10 ВАЖНЫХ ПРИЗНАКОВ:
+  1. volume_change_lag_13: 0.0147
+  2. volume_change_lag_2: 0.0137
+  3. volume_change_lag_8: 0.0114
+  4. open_close_ratio_lag_7: 0.0113
+  5. volume_change_lag_5: 0.0113
+  6. volume_change_lag_12: 0.0111
+  7. volume_change_lag_11: 0.0110
+  8. volume_change_lag_4: 0.0103
+  9. volume_change_lag_6: 0.0102
+  10. volume_change_lag_14: 0.0102

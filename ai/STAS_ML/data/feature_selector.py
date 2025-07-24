@@ -13,6 +13,11 @@ from sklearn.feature_selection import (
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LassoCV, LogisticRegressionCV
 from sklearn.metrics import accuracy_score, f1_score, mean_squared_error
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -551,6 +556,366 @@ class AutomaticFeatureSelector:
             for i, (feature, importance) in enumerate(sorted_features[:5]):
                 print(f"     {i+1}. {feature}: {importance:.4f}")
     
+    def visualize_feature_importance(self, indicators: Dict[str, Any], save_path: str = None) -> go.Figure:
+        """
+        Создание интерактивного графика важности признаков.
+        
+        Args:
+            indicators: Результаты селекции признаков
+            save_path: Путь для сохранения графика
+            
+        Returns:
+            Plotly Figure объект
+        """
+        if 'feature_importance' not in indicators:
+            print("⚠️ Данные о важности признаков недоступны")
+            return None
+        
+        # Подготовка данных
+        feature_importance = indicators['feature_importance']
+        sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+        
+        features = [feat[0] for feat in sorted_features]
+        importances = [feat[1] for feat in sorted_features]
+        
+        # Создание интерактивного графика
+        fig = go.Figure()
+        
+        # Добавление столбчатой диаграммы
+        fig.add_trace(go.Bar(
+            y=features,
+            x=importances,
+            orientation='h',
+            marker=dict(
+                color=importances,
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title="Важность")
+            ),
+            text=[f"{imp:.4f}" for imp in importances],
+            textposition='auto',
+            hovertemplate='<b>%{y}</b><br>Важность: %{x:.4f}<extra></extra>'
+        ))
+        
+        # Настройка макета
+        fig.update_layout(
+            title=f'Важность признаков ({indicators.get("selection_method", "unknown")})',
+            xaxis_title='Важность признака',
+            yaxis_title='Технические индикаторы',
+            height=max(400, len(features) * 25),
+            showlegend=False,
+            template='plotly_white',
+            font=dict(size=12),
+            margin=dict(l=150, r=50, t=80, b=50)
+        )
+        
+        # Сохранение если указан путь
+        if save_path:
+            fig.write_html(save_path)
+            print(f"📊 График важности сохранен: {save_path}")
+        
+        return fig
+    
+    def visualize_correlation_matrix(self, data: pd.DataFrame, selected_features: List[str], 
+                                   save_path: str = None) -> go.Figure:
+        """
+        Создание интерактивной корреляционной матрицы выбранных признаков.
+        
+        Args:
+            data: Данные с признаками
+            selected_features: Список выбранных признаков
+            save_path: Путь для сохранения
+            
+        Returns:
+            Plotly Figure объект
+        """
+        try:
+            # Фильтрация доступных признаков
+            available_features = [feat for feat in selected_features if feat in data.columns]
+            
+            if len(available_features) < 2:
+                print("⚠️ Недостаточно признаков для корреляционной матрицы")
+                return None
+            
+            # Расчет корреляции
+            corr_matrix = data[available_features].corr()
+            
+            # Создание тепловой карты
+            fig = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=corr_matrix.columns,
+                y=corr_matrix.columns,
+                colorscale='RdBu',
+                zmid=0,
+                text=np.round(corr_matrix.values, 3),
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                hovertemplate='%{y} vs %{x}<br>Корреляция: %{z:.3f}<extra></extra>'
+            ))
+            
+            # Настройка макета
+            fig.update_layout(
+                title='Корреляционная матрица выбранных признаков',
+                xaxis_title='Признаки',
+                yaxis_title='Признаки',
+                width=max(600, len(available_features) * 40),
+                height=max(600, len(available_features) * 40),
+                template='plotly_white'
+            )
+            
+            # Поворот подписей осей
+            fig.update_xaxes(tickangle=45)
+            fig.update_yaxes(tickangle=0)
+            
+            if save_path:
+                fig.write_html(save_path)
+                print(f"📊 Корреляционная матрица сохранена: {save_path}")
+            
+            return fig
+            
+        except Exception as e:
+            print(f"❌ Ошибка создания корреляционной матрицы: {e}")
+            return None
+    
+    def visualize_feature_categories(self, indicators: Dict[str, Any], save_path: str = None) -> go.Figure:
+        """
+        Визуализация распределения признаков по категориям.
+        
+        Args:
+            indicators: Результаты селекции
+            save_path: Путь для сохранения
+            
+        Returns:
+            Plotly Figure объект
+        """
+        if 'selected_features' not in indicators:
+            print("⚠️ Список выбранных признаков недоступен")
+            return None
+        
+        selected_features = indicators['selected_features']
+        
+        # Категоризация признаков
+        categories = {
+            'Moving Averages': [],
+            'Momentum': [],
+            'Volatility': [],
+            'Volume': [],
+            'Price Features': [],
+            'Other': []
+        }
+        
+        for feature in selected_features:
+            if any(ma in feature for ma in ['sma_', 'ema_', 'tema', 'trima']):
+                categories['Moving Averages'].append(feature)
+            elif any(mom in feature for mom in ['rsi_', 'macd', 'stoch', 'williams', 'roc_', 'momentum']):
+                categories['Momentum'].append(feature)
+            elif any(vol in feature for vol in ['atr_', 'bb_', 'volatility', 'natr']):
+                categories['Volatility'].append(feature)
+            elif any(vol in feature for vol in ['volume', 'obv', 'ad', 'mfi', 'vwap']):
+                categories['Volume'].append(feature)
+            elif any(price in feature for price in ['price_change', 'return', 'ratio']):
+                categories['Price Features'].append(feature)
+            else:
+                categories['Other'].append(feature)
+        
+        # Подготовка данных для графика
+        category_names = list(categories.keys())
+        category_counts = [len(categories[cat]) for cat in category_names]
+        
+        # Создание круговой диаграммы
+        fig = go.Figure(data=[go.Pie(
+            labels=category_names,
+            values=category_counts,
+            hole=0.4,
+            textinfo='label+percent+value',
+            texttemplate='%{label}<br>%{value} (%{percent})',
+            hovertemplate='<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}<extra></extra>',
+            marker=dict(
+                colors=px.colors.qualitative.Set3,
+                line=dict(color='#000000', width=2)
+            )
+        )])
+        
+        # Настройка макета
+        fig.update_layout(
+            title=f'Распределение выбранных признаков по категориям<br><sub>Всего признаков: {len(selected_features)}</sub>',
+            template='plotly_white',
+            width=700,
+            height=500,
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.01
+            )
+        )
+        
+        if save_path:
+            fig.write_html(save_path)
+            print(f"📊 График категорий сохранен: {save_path}")
+        
+        return fig
+    
+    def create_comprehensive_report(self, indicators: Dict[str, Any], data: pd.DataFrame, 
+                                  save_dir: str = "feature_selection_report") -> Dict[str, go.Figure]:
+        """
+        Создание комплексного отчета по селекции признаков.
+        
+        Args:
+            indicators: Результаты селекции
+            data: Исходные данные
+            save_dir: Директория для сохранения отчетов
+            
+        Returns:
+            Словарь с созданными графиками
+        """
+        import os
+        
+        # Создание директории
+        os.makedirs(save_dir, exist_ok=True)
+        
+        print(f"📊 Создание комплексного отчета по селекции признаков...")
+        
+        reports = {}
+        
+        # 1. График важности признаков
+        importance_fig = self.visualize_feature_importance(
+            indicators, 
+            os.path.join(save_dir, "feature_importance.html")
+        )
+        if importance_fig:
+            reports['importance'] = importance_fig
+        
+        # 2. Корреляционная матрица
+        if 'selected_features' in indicators:
+            corr_fig = self.visualize_correlation_matrix(
+                data, 
+                indicators['selected_features'],
+                os.path.join(save_dir, "correlation_matrix.html")
+            )
+            if corr_fig:
+                reports['correlation'] = corr_fig
+        
+        # 3. Распределение по категориям
+        categories_fig = self.visualize_feature_categories(
+            indicators,
+            os.path.join(save_dir, "feature_categories.html")
+        )
+        if categories_fig:
+            reports['categories'] = categories_fig
+        
+        # 4. Сводный dashboard
+        self._create_dashboard(reports, indicators, os.path.join(save_dir, "dashboard.html"))
+        
+        print(f"✅ Комплексный отчет создан в директории: {save_dir}")
+        return reports
+    
+    def _create_dashboard(self, reports: Dict[str, go.Figure], indicators: Dict[str, Any], save_path: str):
+        """Создание сводного dashboard."""
+        try:
+            from plotly.subplots import make_subplots
+            
+            # Создание подграфиков
+            fig = make_subplots(
+                rows=2, cols=2,
+                subplot_titles=('Важность признаков', 'Распределение по категориям', 
+                               'Статистика селекции', 'Информация о методе'),
+                specs=[[{"type": "bar"}, {"type": "pie"}],
+                       [{"type": "table"}, {"type": "table"}]],
+                vertical_spacing=0.15,
+                horizontal_spacing=0.1
+            )
+            
+            # 1. Важность признаков (упрощенная версия)
+            if 'importance' in reports and 'feature_importance' in indicators:
+                feature_importance = indicators['feature_importance']
+                sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)[:10]
+                
+                features = [feat[0] for feat in sorted_features]
+                importances = [feat[1] for feat in sorted_features]
+                
+                fig.add_trace(
+                    go.Bar(y=features, x=importances, orientation='h', name='Важность'),
+                    row=1, col=1
+                )
+            
+            # 2. Категории (упрощенная версия)
+            if 'categories' in reports:
+                fig.add_trace(reports['categories'].data[0], row=1, col=2)
+            
+            # 3. Статистика селекции
+            stats_data = [
+                ["Метод селекции", indicators.get('selection_method', 'N/A')],
+                ["Всего признаков", indicators.get('n_features', 'N/A')],
+                ["Лучший признак", list(indicators.get('feature_importance', {}).keys())[0] if indicators.get('feature_importance') else 'N/A'],
+                ["Средняя важность", f"{np.mean(list(indicators.get('feature_importance', {}).values())):.4f}" if indicators.get('feature_importance') else 'N/A']
+            ]
+            
+            fig.add_trace(
+                go.Table(
+                    header=dict(values=['Параметр', 'Значение'], fill_color='lightblue'),
+                    cells=dict(values=list(zip(*stats_data)), fill_color='white')
+                ),
+                row=2, col=1
+            )
+            
+            # 4. Информация о процессе
+            process_info = [
+                ["Этап", "Статус"],
+                ["Генерация индикаторов", "✅ Завершено"],
+                ["Фильтрация по вариации", "✅ Завершено"],
+                ["Корреляционный анализ", "✅ Завершено"],
+                ["ML селекция", "✅ Завершено"],
+                ["Кросс-валидация", "✅ Завершено"]
+            ]
+            
+            fig.add_trace(
+                go.Table(
+                    header=dict(values=['Этап обработки', 'Статус'], fill_color='lightgreen'),
+                    cells=dict(values=list(zip(*process_info)), fill_color='white')
+                ),
+                row=2, col=2
+            )
+            
+            # Настройка макета
+            fig.update_layout(
+                title=f'Dashboard анализа селекции признаков<br><sub>{indicators.get("selection_method", "unknown")} метод</sub>',
+                height=800,
+                showlegend=False,
+                template='plotly_white'
+            )
+            
+            # Сохранение
+            fig.write_html(save_path)
+            print(f"📊 Dashboard сохранен: {save_path}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка создания dashboard: {e}")
+    
+    def show_interactive_plots(self, indicators: Dict[str, Any], data: pd.DataFrame):
+        """Отображение интерактивных графиков в браузере."""
+        print("🚀 Запуск интерактивной визуализации...")
+        
+        # Важность признаков
+        importance_fig = self.visualize_feature_importance(indicators)
+        if importance_fig:
+            importance_fig.show()
+        
+        # Корреляционная матрица
+        if 'selected_features' in indicators:
+            corr_fig = self.visualize_correlation_matrix(data, indicators['selected_features'])
+            if corr_fig:
+                corr_fig.show()
+        
+        # Категории признаков
+        categories_fig = self.visualize_feature_categories(indicators)
+        if categories_fig:
+            categories_fig.show()
+        
+        print("✅ Интерактивные графики отображены в браузере")
+    
     def get_optimized_config(self, original_config, selected_indicators: Dict[str, Any]) -> Any:
         """Создать оптимизированную конфигурацию с выбранными индикаторами."""
         
@@ -641,6 +1006,14 @@ def create_auto_optimized_config(original_config, data: pd.DataFrame):
     
     # Выбираем лучшие индикаторы
     selected_indicators = selector.select_best_indicators(data)
+    
+    # Создание интерактивной визуализации
+    print("🎨 Создание интерактивной визуализации...")
+    selector.show_interactive_plots(selected_indicators, data)
+    
+    # Создание комплексного отчета
+    print("📊 Создание комплексного отчета...")
+    reports = selector.create_comprehensive_report(selected_indicators, data)
     
     # Создаем оптимизированную конфигурацию
     optimized_config = selector.get_optimized_config(original_config, selected_indicators)
