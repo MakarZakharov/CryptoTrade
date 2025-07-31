@@ -1,2 +1,0 @@
-symbol,timeframe,exchange,initial_balance,commission_rate,slippage_rate,spread_rate,reward_scheme,lookback_window,experiment_name,created_at
-BTCUSDT,1d,binance,10000.0,0.001,0.001,0.0005,conservative,75,BTCUSDT_1d_conservative,2025-07-08T19:05:45.721288
