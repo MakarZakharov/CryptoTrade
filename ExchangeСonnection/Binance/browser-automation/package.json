@@ -1,0 +1,35 @@
+{
+  "name": "binance-browser-bot",
+  "version": "1.0.0",
+  "description": "Automated Binance browser bot with stealth and proxy rotation",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node bot.js --dev",
+    "install-browsers": "npx playwright install chromium",
+    "test": "node test.js",
+    "scheduled": "SCHEDULED=true node bot.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "playwright-extra": "^4.3.6",
+    "playwright-extra-plugin-stealth": "^2.11.2",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "winston": "^3.11.0",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "binance",
+    "automation",
+    "playwright",
+    "stealth",
+    "crypto",
+    "trading"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
