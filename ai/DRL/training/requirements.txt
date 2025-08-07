@@ -1,0 +1,43 @@
+# Professional DRL Trading Agent Requirements
+# Core RL and ML libraries
+stable-baselines3>=2.0.0
+torch>=1.11.0
+gymnasium>=0.26.0
+numpy>=1.21.0
+pandas>=1.3.0
+scipy>=1.7.0
+
+# Visualization and plotting  
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Configuration and utilities
+PyYAML>=6.0
+pathlib2>=2.3.0
+
+# Optional: Weights & Biases for advanced logging
+wandb>=0.13.0
+
+# Optional: Technical indicators (if available)
+TA-Lib>=0.4.0
+
+# Data processing and analysis
+scikit-learn>=1.0.0
+numba>=0.56.0
+
+# System utilities
+psutil>=5.8.0
+tqdm>=4.62.0
+
+# Development and testing (optional)
+pytest>=6.2.0
+pytest-cov>=3.0.0
+black>=22.0.0
+flake8>=4.0.0
+
+# Performance monitoring
+tensorboard>=2.8.0
+
+# Optional: Advanced data fetching
+requests>=2.25.0
+python-dateutil>=2.8.0
