@@ -1,0 +1,238 @@
+# Конфигурация торгового окружения для DRL
+# Используется для быстрой настройки параметров без изменения кода
+
+# ============================================
+# ДАННЫЕ
+# ============================================
+data:
+  # Путь к данным (если None, будет автоматический поиск)
+  path: null
+
+  # Торговая пара
+  symbol: "BTCUSDT"
+
+  # Таймфрейм (15m, 1h, 4h, 1d)
+  timeframe: "1d"
+
+  # Индексы для train/val/test split
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+# ============================================
+# ТОРГОВЫЕ ПАРАМЕТРЫ
+# ============================================
+trading:
+  # Начальный баланс
+  initial_balance: 10000.0
+
+  # Максимальный размер позиции (доля от баланса)
+  max_position_size: 1.0
+
+  # Минимальный размер ордера
+  min_order_size: 0.001
+
+# ============================================
+# ACTION SPACE
+# ============================================
+action_space:
+  # Тип: "discrete" или "continuous"
+  type: "discrete"
+
+  # Для discrete: количество действий (обычно 3: hold, buy, sell)
+  n_actions: 3
+
+# ============================================
+# OBSERVATION SPACE
+# ============================================
+observation:
+  # Размер окна для исторических данных
+  window_size: 50
+
+  # Добавлять ли технические индикаторы
+  add_indicators: true
+
+  # Нормализовать ли наблюдения
+  normalize: true
+
+  # Список индикаторов для включения (если add_indicators = true)
+  indicators:
+    - sma_7
+    - sma_14
+    - sma_21
+    - ema_7
+    - ema_14
+    - rsi_14
+    - macd
+    - atr_14
+    - bollinger_bands
+
+# ============================================
+# REWARD FUNCTION
+# ============================================
+reward:
+  # Тип: "pnl", "log_return", "sharpe", "risk_adjusted", "sortino"
+  type: "risk_adjusted"
+
+  # Масштабирование награды
+  scaling: 1.0
+
+  # Параметры для risk_adjusted
+  turnover_penalty: 0.0001  # λ - штраф за торговый оборот
+  drawdown_penalty: 0.001   # μ - штраф за просадку
+
+# ============================================
+# MARKET SIMULATION
+# ============================================
+market_simulation:
+  # Комиссии
+  maker_fee: 0.0001  # 0.01%
+  taker_fee: 0.001   # 0.1%
+
+  # Модель проскальзывания: "fixed", "percentage", "volume_based", "elliptic"
+  slippage_model: "percentage"
+  slippage_fixed: 0.0
+  slippage_percentage: 0.0005  # 0.05%
+  slippage_impact_factor: 0.01
+
+  # Спред
+  spread_base: 0.0001  # 0.01%
+  spread_volatility_multiplier: 1.0
+
+  # Ликвидность
+  liquidity_factor: 1.0
+  min_liquidity_factor: 0.1
+
+  # Частичное исполнение
+  allow_partial_fills: true
+  partial_fill_threshold: 0.8
+
+  # Задержка исполнения (мс)
+  execution_delay_ms: 0.0
+
+  # Минимальный шаг цены
+  tick_size: 0.01
+
+# ============================================
+# EPISODE TERMINATION
+# ============================================
+episode:
+  # Максимальное количество шагов (null = до конца данных)
+  max_steps: null
+
+  # Останавливать при банкротстве
+  stop_on_bankruptcy: true
+  bankruptcy_threshold: 0.1  # 10% от начального баланса
+
+  # Максимальная допустимая просадка (null = не ограничено)
+  max_drawdown_threshold: null  # Например: -0.5 = -50%
+
+# ============================================
+# LOGGING
+# ============================================
+logging:
+  # Уровень логирования
+  level: "INFO"
+
+  # Выводить метрики каждые N шагов
+  log_frequency: 100
+
+  # Сохранять ли логи в файл
+  save_logs: true
+  log_dir: "logs"
+
+  # Сохранять ли чекпоинты
+  save_checkpoints: true
+  checkpoint_dir: "checkpoints"
+  checkpoint_frequency: 1000
+
+# ============================================
+# VISUALIZATION
+# ============================================
+visualization:
+  # Рендерить ли окружение
+  render: false
+  render_mode: "human"  # "human" или "rgb_array"
+
+  # Сохранять ли графики
+  save_plots: true
+  plots_dir: "plots"
+
+  # DPI для сохраненных изображений
+  plot_dpi: 300
+
+  # Размер фигур matplotlib
+  figsize: [16, 12]
+
+# ============================================
+# RANDOM SEED
+# ============================================
+random_seed: 42
+
+# ============================================
+# TRAINING (для Stable-Baselines3)
+# ============================================
+training:
+  # Алгоритм: "PPO", "A2C", "SAC", "TD3"
+  algorithm: "PPO"
+
+  # Общие параметры
+  total_timesteps: 100000
+  learning_rate: 0.0003
+
+  # Параметры PPO
+  ppo:
+    n_steps: 2048
+    batch_size: 64
+    n_epochs: 10
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.0
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+
+  # Параметры A2C
+  a2c:
+    n_steps: 5
+    gamma: 0.99
+    gae_lambda: 1.0
+    ent_coef: 0.0
+    vf_coef: 0.25
+    max_grad_norm: 0.5
+
+  # Векторизация
+  n_envs: 4
+
+  # Evaluation
+  eval_freq: 10000
+  n_eval_episodes: 10
+
+# ============================================
+# BASELINE STRATEGIES (для сравнения)
+# ============================================
+baselines:
+  # Buy & Hold
+  buy_and_hold: true
+
+  # Random trading
+  random_trading: true
+
+  # Simple momentum
+  momentum:
+    enabled: true
+    period: 20
+    threshold: 0.02
+
+# ============================================
+# ADVANCED
+# ============================================
+advanced:
+  # Использовать ли GPU (для PyTorch)
+  use_gpu: false
+
+  # Количество параллельных процессов
+  n_processes: 1
+
+  # Verbose level
+  verbose: 1

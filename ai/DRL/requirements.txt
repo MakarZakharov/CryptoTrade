@@ -1,0 +1,11 @@
+gymnasium
+stable-baselines3
+torch
+numpy
+pandas
+ccxt
+ta
+matplotlib
+plotly
+tensorboard
+pyarrow
