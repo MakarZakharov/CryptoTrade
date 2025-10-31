@@ -1,3 +1,4 @@
 {
-    "Codegeex.RepoIndex": true
+    "Codegeex.RepoIndex": true,
+    "git.ignoreLimitWarning": true
 }
