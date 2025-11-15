@@ -1,0 +1,6 @@
+[submodule "ai/DRLstolen/FinRL-Meta"]
+	path = ai/DRLstolen/FinRL-Meta
+	url = https://github.com/AI4Finance-Foundation/FinRL-Meta.git
+[submodule "ai/DRLstolen/FinRL_Crypto"]
+	path = ai/DRLstolen/FinRL_Crypto
+	url = https://github.com/AI4Finance-Foundation/FinRL_Crypto.git
