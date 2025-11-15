@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Порівняння графіків</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.5.0/dist/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const LineChart = Recharts.LineChart;
+        const Line = Recharts.Line;
+        const XAxis = Recharts.XAxis;
+        const YAxis = Recharts.YAxis;
+        const CartesianGrid = Recharts.CartesianGrid;
+        const Tooltip = Recharts.Tooltip;
+        const ResponsiveContainer = Recharts.ResponsiveContainer;
+
+        const useState = React.useState;
+
+        const generateData = (offset) => {
+          const result = [];
+          for (let i = 0; i < 50; i++) {
+            result.push({
+              x: i,
+              y: Math.sin(i / 5 + offset) * 20 + 50 + Math.random() * 10
+            });
+          }
+          return result;
+        };
+
+        const data1 = generateData(0);
+        const data2 = generateData(1);
+
+        function ComparisonCharts() {
+          const [crosshairX, setCrosshairX] = useState(null);
+
+          const handleMouseMove = (e) => {
+            if (e && e.activeLabel !== undefined) {
+              setCrosshairX(e.activeLabel);
+            }
+          };
+
+          const handleMouseLeave = () => {
+            setCrosshairX(null);
+          };
+
+          const getValueAtX = (data, x) => {
+            const point = data.find(d => d.x === x);
+            return point ? point.y.toFixed(2) : 'N/A';
+          };
+
+          return React.createElement('div', {
+            className: 'min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-8'
+          },
+            React.createElement('div', { className: 'max-w-7xl mx-auto' },
+              React.createElement('h1', {
+                className: 'text-4xl font-bold text-white mb-2 text-center'
+              }, 'Порівняння графіків'),
+
+              React.createElement('p', {
+                className: 'text-slate-300 text-center mb-8'
+              }, 'Наведіть курсор на будь-який графік для синхронного відображення значень'),
+
+              crosshairX !== null && React.createElement('div', {
+                className: 'bg-white/10 backdrop-blur-md rounded-lg p-4 mb-6 border border-white/20'
+              },
+                React.createElement('div', { className: 'grid grid-cols-3 gap-4 text-white' },
+                  React.createElement('div', null,
+                    React.createElement('p', { className: 'text-sm text-slate-300' }, 'Позиція X:'),
+                    React.createElement('p', { className: 'text-2xl font-bold' }, crosshairX)
+                  ),
+                  React.createElement('div', null,
+                    React.createElement('p', { className: 'text-sm text-blue-300' }, 'Графік 1:'),
+                    React.createElement('p', { className: 'text-2xl font-bold text-blue-400' }, getValueAtX(data1, crosshairX))
+                  ),
+                  React.createElement('div', null,
+                    React.createElement('p', { className: 'text-sm text-green-300' }, 'Графік 2:'),
+                    React.createElement('p', { className: 'text-2xl font-bold text-green-400' }, getValueAtX(data2, crosshairX))
+                  )
+                )
+              ),
+
+              React.createElement('div', { className: 'space-y-6' },
+                React.createElement('div', {
+                  className: 'bg-white/5 backdrop-blur-md rounded-lg p-6 border border-white/10 hover:border-blue-400/50 transition-all'
+                },
+                  React.createElement('h2', {
+                    className: 'text-2xl font-semibold text-white mb-4'
+                  }, '📊 Графік 1'),
+
+                  React.createElement(ResponsiveContainer, { width: '100%', height: 300 },
+                    React.createElement(LineChart, {
+                      data: data1,
+                      onMouseMove: handleMouseMove,
+                      onMouseLeave: handleMouseLeave
+                    },
+                      React.createElement(CartesianGrid, { strokeDasharray: '3 3', stroke: '#ffffff20' }),
+                      React.createElement(XAxis, { dataKey: 'x', stroke: '#fff' }),
+                      React.createElement(YAxis, { stroke: '#fff' }),
+                      React.createElement(Tooltip, {
+                        contentStyle: {
+                          backgroundColor: 'rgba(0,0,0,0.8)',
+                          border: '1px solid #3b82f6',
+                          borderRadius: '8px',
+                          color: '#fff'
+                        }
+                      }),
+                      React.createElement(Line, {
+                        type: 'monotone',
+                        dataKey: 'y',
+                        stroke: '#3b82f6',
+                        strokeWidth: 2,
+                        dot: false,
+                        activeDot: { r: 6 }
+                      })
+                    )
+                  )
+                ),
+
+                React.createElement('div', {
+                  className: 'bg-white/5 backdrop-blur-md rounded-lg p-6 border border-white/10 hover:border-green-400/50 transition-all'
+                },
+                  React.createElement('h2', {
+                    className: 'text-2xl font-semibold text-white mb-4'
+                  }, '📈 Графік 2'),
+
+                  React.createElement(ResponsiveContainer, { width: '100%', height: 300 },
+                    React.createElement(LineChart, {
+                      data: data2,
+                      onMouseMove: handleMouseMove,
+                      onMouseLeave: handleMouseLeave
+                    },
+                      React.createElement(CartesianGrid, { strokeDasharray: '3 3', stroke: '#ffffff20' }),
+                      React.createElement(XAxis, { dataKey: 'x', stroke: '#fff' }),
+                      React.createElement(YAxis, { stroke: '#fff' }),
+                      React.createElement(Tooltip, {
+                        contentStyle: {
+                          backgroundColor: 'rgba(0,0,0,0.8)',
+                          border: '1px solid #10b981',
+                          borderRadius: '8px',
+                          color: '#fff'
+                        }
+                      }),
+                      React.createElement(Line, {
+                        type: 'monotone',
+                        dataKey: 'y',
+                        stroke: '#10b981',
+                        strokeWidth: 2,
+                        dot: false,
+                        activeDot: { r: 6 }
+                      })
+                    )
+                  )
+                )
+              ),
+
+              React.createElement('div', {
+                className: 'mt-8 bg-white/5 backdrop-blur-md rounded-lg p-4 border border-white/10'
+              },
+                React.createElement('p', {
+                  className: 'text-slate-300 text-sm text-center'
+                }, '💡 Підказка: Наведіть курсор на будь-який графік')
+              )
+            )
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(ComparisonCharts));
+    </script>
+</body>
+</html>
