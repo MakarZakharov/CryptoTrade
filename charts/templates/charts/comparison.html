@@ -405,32 +405,50 @@
         });
 
         // Завантажуємо список файлів
-        async function loadAvailableFiles() {
-            try {
-                const response = await fetch('/charts/api/available-files/');
-                const result = await response.json();
+        // Завантаження статичних файлів
+document.getElementById('loadStaticBtn').addEventListener('click', async () => {
+    const file1 = document.getElementById('staticFile1').value;
+    const file2 = document.getElementById('staticFile2').value;
 
-                if (result.success) {
-                    availableFiles = result.files;
-                    const select1 = document.getElementById('staticFile1');
-                    const select2 = document.getElementById('staticFile2');
+    if (!file1 && !file2) {
+        showError('Виберіть хоча б один файл!');
+        return;
+    }
 
-                    result.files.forEach(file => {
-                        const option1 = document.createElement('option');
-                        option1.value = file.name;
-                        option1.textContent = `${file.name} (${file.rows} рядків)`;
-                        select1.appendChild(option1);
+    hideError();
+    document.getElementById('loading').classList.remove('hidden');
 
-                        const option2 = document.createElement('option');
-                        option2.value = file.name;
-                        option2.textContent = `${file.name} (${file.rows} рядків)`;
-                        select2.appendChild(option2);
-                    });
-                }
-            } catch (error) {
-                console.error('Помилка завантаження файлів:', error);
-            }
+    const formData = new FormData();
+    if (file1) formData.append('file1_path', file1);  // Змінено з file1_name на file1_path
+    if (file2) formData.append('file2_path', file2);  // Змінено з file2_name на file2_path
+
+    try {
+        const response = await fetch('/charts/api/load-parquet/', {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-CSRFToken': getCookie('csrftoken') }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            data1 = result.data1 || [];
+            data2 = result.data2 || [];
+            createCharts();
+
+            document.getElementById('static-file1-info').textContent =
+                result.data1.length > 0 ? `✓ ${result.data1.length} точок` : '';
+            document.getElementById('static-file2-info').textContent =
+                result.data2.length > 0 ? `✓ ${result.data2.length} точок` : '';
+        } else {
+            showError('Помилка: ' + result.error);
         }
+    } catch (error) {
+        showError('Помилка: ' + error.message);
+    } finally {
+        document.getElementById('loading').classList.add('hidden');
+    }
+});
 
         // Ініціалізація
         createCharts();
