@@ -449,7 +449,33 @@ document.getElementById('loadStaticBtn').addEventListener('click', async () => {
         document.getElementById('loading').classList.add('hidden');
     }
 });
+// Завантажуємо список файлів
+async function loadAvailableFiles() {
+    try {
+        const response = await fetch('/charts/api/available-files/');
+        const result = await response.json();
 
+        if (result.success) {
+            availableFiles = result.files;
+            const select1 = document.getElementById('staticFile1');
+            const select2 = document.getElementById('staticFile2');
+
+            result.files.forEach(file => {
+                const option1 = document.createElement('option');
+                option1.value = file.full_path;
+                option1.textContent = `${file.path} (${file.rows} рядків)`;
+                select1.appendChild(option1);
+
+                const option2 = document.createElement('option');
+                option2.value = file.full_path;
+                option2.textContent = `${file.path} (${file.rows} рядків)`;
+                select2.appendChild(option2);
+            });
+        }
+    } catch (error) {
+        console.error('Помилка завантаження файлів:', error);
+    }
+}
         // Ініціалізація
         createCharts();
         loadAvailableFiles();
