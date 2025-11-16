@@ -3,6 +3,7 @@ from django.http import JsonResponse
 from django.conf import settings
 import pandas as pd
 import os
+from datetime import datetime
 
 
 def comparison_view(request):
@@ -36,13 +37,15 @@ def load_parquet_data(request):
                 df2 = None
 
             # Конвертуємо DataFrame в дані для графіків
-            data1 = process_dataframe(df1) if df1 is not None else []
-            data2 = process_dataframe(df2) if df2 is not None else []
+            result1 = process_dataframe_with_dates(df1) if df1 is not None else {'data': [], 'dates': []}
+            result2 = process_dataframe_with_dates(df2) if df2 is not None else {'data': [], 'dates': []}
 
             return JsonResponse({
                 'success': True,
-                'data1': data1,
-                'data2': data2,
+                'data1': result1['data'],
+                'data2': result2['data'],
+                'dates1': result1['dates'],
+                'dates2': result2['dates'],
                 'columns1': list(df1.columns) if df1 is not None else [],
                 'columns2': list(df2.columns) if df2 is not None else [],
                 'info1': get_dataframe_info(df1) if df1 is not None else {},
@@ -58,10 +61,10 @@ def load_parquet_data(request):
     return JsonResponse({'success': False, 'error': 'Invalid request'}, status=400)
 
 
-def process_dataframe(df, max_points=1000):
-    """Обробляє DataFrame та повертає дані для графіка"""
+def process_dataframe_with_dates(df, max_points=1000):
+    """Обробляє DataFrame та повертає дані для графіка з датами"""
     if df is None or df.empty:
-        return []
+        return {'data': [], 'dates': []}
 
     print(f"Processing dataframe with shape: {df.shape}")
     print(f"Columns: {df.columns.tolist()}")
@@ -70,48 +73,53 @@ def process_dataframe(df, max_points=1000):
     numeric_cols = df.select_dtypes(include=['number']).columns
 
     if len(numeric_cols) == 0:
-        return []
+        return {'data': [], 'dates': []}
 
-    # Перевіряємо чи є колонка timestamp або date
-    time_col = None
-    for col in ['timestamp', 'date', 'time', 'datetime']:
+    # Шукаємо колонку з датою/часом
+    date_col = None
+    for col in ['timestamp', 'date', 'time', 'datetime', 'open_time']:
         if col in df.columns:
-            time_col = col
+            date_col = col
+            print(f"Found date column: {date_col}")
             break
 
-    # Визначаємо X та Y
-    if time_col:
-        # Якщо є часова колонка - використовуємо індекс як X
-        x_data = list(range(len(df)))
-        # Y - перша числова колонка (зазвичай це close price)
-        y_col = numeric_cols[0]
-        print(f"Using time column: {time_col}, Y column: {y_col}")
-    elif 'close' in numeric_cols:
-        # Якщо є close - використовуємо його як Y
-        x_data = list(range(len(df)))
+    # Визначаємо Y колонку
+    if 'close' in numeric_cols:
         y_col = 'close'
-        print(f"Using close column as Y")
     elif len(numeric_cols) >= 2:
-        # Якщо є 2+ числові колонки - беремо другу як Y (перша часто timestamp)
-        x_data = list(range(len(df)))
         y_col = numeric_cols[1] if numeric_cols[0] in ['timestamp', 'time'] else numeric_cols[0]
-        print(f"Using column: {y_col}")
     else:
-        # Якщо тільки 1 числова колонка
-        x_data = list(range(len(df)))
         y_col = numeric_cols[0]
-        print(f"Using single numeric column: {y_col}")
+
+    print(f"Using Y column: {y_col}")
 
     # Створюємо дані
     data = []
+    dates = []
     step = max(1, len(df) // max_points)
 
     for i in range(0, len(df), step):
         try:
             data.append({
-                'x': float(i),  # Використовуємо індекс як X
+                'x': float(i),
                 'y': float(df[y_col].iloc[i])
             })
+
+            # Додаємо дату якщо є
+            if date_col:
+                date_value = df[date_col].iloc[i]
+                # Конвертуємо timestamp в дату
+                if pd.api.types.is_numeric_dtype(df[date_col]):
+                    # Якщо це мілісекунди
+                    if date_value > 1e12:
+                        date_value = date_value / 1000
+                    date_str = datetime.fromtimestamp(date_value).strftime('%Y-%m-%d')
+                else:
+                    date_str = str(date_value)[:10]  # Беремо тільки дату
+                dates.append(date_str)
+            else:
+                dates.append(str(i))
+
         except (ValueError, TypeError) as e:
             print(f"Error at index {i}: {e}")
             continue
@@ -119,8 +127,9 @@ def process_dataframe(df, max_points=1000):
     print(f"Generated {len(data)} data points")
     if len(data) > 0:
         print(f"Sample data: {data[0]}, {data[-1]}")
+        print(f"Sample dates: {dates[0] if dates else 'N/A'}, {dates[-1] if dates else 'N/A'}")
 
-    return data
+    return {'data': data, 'dates': dates}
 
 
 def get_dataframe_info(df):
@@ -139,7 +148,6 @@ def get_dataframe_info(df):
 
 def get_available_files(request):
     """API для отримання списку доступних Parquet файлів"""
-    # Правильний шлях до ваших файлів
     data_dir = os.path.join(settings.BASE_DIR, 'EnvironmentData', 'Date', 'binance')
 
     print(f"Looking for files in: {data_dir}")
@@ -147,7 +155,6 @@ def get_available_files(request):
 
     files = []
 
-    # Рекурсивно шукаємо всі parquet файли
     if os.path.exists(data_dir):
         for root, dirs, filenames in os.walk(data_dir):
             for filename in filenames:
@@ -155,7 +162,6 @@ def get_available_files(request):
                     filepath = os.path.join(root, filename)
                     rel_path = os.path.relpath(filepath, data_dir)
 
-                    # Перевіряємо розмір
                     file_size = os.path.getsize(filepath)
                     if file_size == 0:
                         print(f"Skipping empty file: {filepath}")
