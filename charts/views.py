@@ -63,25 +63,44 @@ def process_dataframe(df, max_points=1000):
     if df is None or df.empty:
         return []
 
+    print(f"Processing dataframe with shape: {df.shape}")
+    print(f"Columns: {df.columns.tolist()}")
+
     # Знаходимо числові колонки
     numeric_cols = df.select_dtypes(include=['number']).columns
 
     if len(numeric_cols) == 0:
         return []
 
-    # Якщо є datetime індекс, використовуємо його як X
-    if pd.api.types.is_datetime64_any_dtype(df.index):
-        x_data = (df.index - df.index[0]).total_seconds()
+    # Перевіряємо чи є колонка timestamp або date
+    time_col = None
+    for col in ['timestamp', 'date', 'time', 'datetime']:
+        if col in df.columns:
+            time_col = col
+            break
+
+    # Визначаємо X та Y
+    if time_col:
+        # Якщо є часова колонка - використовуємо індекс як X
+        x_data = list(range(len(df)))
+        # Y - перша числова колонка (зазвичай це close price)
         y_col = numeric_cols[0]
-    # Якщо є 2+ числові колонки
+        print(f"Using time column: {time_col}, Y column: {y_col}")
+    elif 'close' in numeric_cols:
+        # Якщо є close - використовуємо його як Y
+        x_data = list(range(len(df)))
+        y_col = 'close'
+        print(f"Using close column as Y")
     elif len(numeric_cols) >= 2:
-        x_col = numeric_cols[0]
-        y_col = numeric_cols[1]
-        x_data = df[x_col]
-    # Якщо тільки 1 числова колонка
+        # Якщо є 2+ числові колонки - беремо другу як Y (перша часто timestamp)
+        x_data = list(range(len(df)))
+        y_col = numeric_cols[1] if numeric_cols[0] in ['timestamp', 'time'] else numeric_cols[0]
+        print(f"Using column: {y_col}")
     else:
-        x_data = df.index
+        # Якщо тільки 1 числова колонка
+        x_data = list(range(len(df)))
         y_col = numeric_cols[0]
+        print(f"Using single numeric column: {y_col}")
 
     # Створюємо дані
     data = []
@@ -90,11 +109,16 @@ def process_dataframe(df, max_points=1000):
     for i in range(0, len(df), step):
         try:
             data.append({
-                'x': float(x_data.iloc[i] if hasattr(x_data, 'iloc') else x_data[i]),
+                'x': float(i),  # Використовуємо індекс як X
                 'y': float(df[y_col].iloc[i])
             })
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            print(f"Error at index {i}: {e}")
             continue
+
+    print(f"Generated {len(data)} data points")
+    if len(data) > 0:
+        print(f"Sample data: {data[0]}, {data[-1]}")
 
     return data
 
@@ -115,8 +139,11 @@ def get_dataframe_info(df):
 
 def get_available_files(request):
     """API для отримання списку доступних Parquet файлів"""
-    # Шукаємо у папці Date
-    data_dir = os.path.join(settings.BASE_DIR, 'Date')
+    # Правильний шлях до ваших файлів
+    data_dir = os.path.join(settings.BASE_DIR, 'EnvironmentData', 'Date', 'binance')
+
+    print(f"Looking for files in: {data_dir}")
+    print(f"Directory exists: {os.path.exists(data_dir)}")
 
     files = []
 
@@ -151,6 +178,8 @@ def get_available_files(request):
                         pass
     else:
         print(f"Directory not found: {data_dir}")
+
+    print(f"Found {len(files)} valid files")
 
     return JsonResponse({
         'success': True,
