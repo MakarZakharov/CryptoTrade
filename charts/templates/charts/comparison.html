@@ -156,6 +156,7 @@
         };
 
         // Налаштування графіків
+        // Налаштування графіків
         const commonOptions = {
             responsive: true,
             maintainAspectRatio: true,
@@ -171,51 +172,65 @@
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
                     titleColor: '#fff',
                     bodyColor: '#fff',
-                    borderWidth: 1,
-                    scales: {
-    x: {
-        type: 'linear',
-        ticks: {
-            color: '#fff',
-            callback: function(value) {
-                return Math.round(value); // Показуємо індекс
-            }
-        },
-        grid: { color: 'rgba(255, 255, 255, 0.1)' },
-        title: {
-            display: true,
-            text: 'Індекс (час)',
-            color: '#fff'
-        }
-    },
-    y: {
-        ticks: {
-            color: '#fff',
-            callback: function(value) {
-                if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
-                if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
-                return value.toFixed(0);
-            }
-        },
-        grid: { color: 'rgba(255, 255, 255, 0.1)' },
-        title: {
-            display: true,
-            text: 'Ціна',
-            color: '#fff'
-        }
-    }
-}
+                    borderWidth: 1
                 }
             },
             scales: {
                 x: {
                     type: 'linear',
-                    ticks: { color: '#fff' },
-                    grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                    position: 'bottom',
+                    ticks: {
+                        color: '#fff',
+                        font: {
+                            size: 12
+                        },
+                        callback: function(value) {
+                            return Math.round(value);
+                        }
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)',
+                        drawBorder: true,
+                        borderColor: '#fff'
+                    },
+                    title: {
+                        display: true,
+                        text: 'Індекс (час)',
+                        color: '#fff',
+                        font: {
+                            size: 14,
+                            weight: 'bold'
+                        }
+                    }
                 },
                 y: {
-                    ticks: { color: '#fff' },
-                    grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                    type: 'linear',
+                    position: 'left',
+                    ticks: {
+                        color: '#fff',
+                        font: {
+                            size: 12
+                        },
+                        callback: function(value) {
+                            if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                            if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+                            return value.toFixed(0);
+                        }
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)',
+                        drawBorder: true,
+                        borderColor: '#fff'
+                    },
+                    title: {
+                        display: true,
+                        text: 'Ціна',
+                        color: '#fff',
+                        font: {
+                            size: 14,
+                            weight: 'bold'
+                        }
+                    }
                 }
             },
             onHover: (event, activeElements, chart) => {
