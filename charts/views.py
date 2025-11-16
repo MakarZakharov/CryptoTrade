@@ -7,48 +7,23 @@ import os
 
 def comparison_view(request):
     """Головна сторінка з графіками"""
-    # Отримуємо список доступних Parquet файлів
-    parquet_dir = os.path.join(settings.BASE_DIR, 'data', 'parquet')
-
-    available_files = []
-    if os.path.exists(parquet_dir):
-        available_files = [f for f in os.listdir(parquet_dir) if f.endswith('.parquet')]
-
-    context = {
-        'available_files': available_files
-    }
-    return render(request, 'charts/comparison.html', context)
+    return render(request, 'charts/comparison.html')
 
 
 def load_parquet_data(request):
     """API endpoint для завантаження даних з Parquet файлів"""
     if request.method == 'POST':
         try:
-            # Отримуємо назви файлів або завантажені файли
-            file1_name = request.POST.get('file1_name')
-            file2_name = request.POST.get('file2_name')
-            file1_path = request.POST.get('file1_path')  # Повний шлях
-            file2_path = request.POST.get('file2_path')  # Повний шлях
+            file1_path = request.POST.get('file1_path')
+            file2_path = request.POST.get('file2_path')
             file1_upload = request.FILES.get('file1')
             file2_upload = request.FILES.get('file2')
-
-            env_data_dir = os.path.join(settings.BASE_DIR, 'EnvironmentData', 'data')
 
             # Обробляємо перший файл
             if file1_upload:
                 df1 = pd.read_parquet(file1_upload)
             elif file1_path and os.path.exists(file1_path):
                 df1 = pd.read_parquet(file1_path)
-            elif file1_name:
-                # Шукаємо файл по імені
-                found = False
-                for root, dirs, filenames in os.walk(env_data_dir):
-                    if file1_name in filenames:
-                        df1 = pd.read_parquet(os.path.join(root, file1_name))
-                        found = True
-                        break
-                if not found:
-                    df1 = None
             else:
                 df1 = None
 
@@ -57,15 +32,6 @@ def load_parquet_data(request):
                 df2 = pd.read_parquet(file2_upload)
             elif file2_path and os.path.exists(file2_path):
                 df2 = pd.read_parquet(file2_path)
-            elif file2_name:
-                found = False
-                for root, dirs, filenames in os.walk(env_data_dir):
-                    if file2_name in filenames:
-                        df2 = pd.read_parquet(os.path.join(root, file2_name))
-                        found = True
-                        break
-                if not found:
-                    df2 = None
             else:
                 df2 = None
 
@@ -119,7 +85,7 @@ def process_dataframe(df, max_points=1000):
 
     # Створюємо дані
     data = []
-    step = max(1, len(df) // max_points)  # Зменшуємо кількість точок якщо багато
+    step = max(1, len(df) // max_points)
 
     for i in range(0, len(df), step):
         try:
@@ -149,73 +115,44 @@ def get_dataframe_info(df):
 
 def get_available_files(request):
     """API для отримання списку доступних Parquet файлів"""
-    # Шукаємо у папці EnvironmentData
-    env_data_dir = os.path.join(settings.BASE_DIR, 'EnvironmentData', 'data')
+    # Шукаємо у папці Date
+    data_dir = os.path.join(settings.BASE_DIR, 'Date')
 
     files = []
 
     # Рекурсивно шукаємо всі parquet файли
-    if os.path.exists(env_data_dir):
-        for root, dirs, filenames in os.walk(env_data_dir):
+    if os.path.exists(data_dir):
+        for root, dirs, filenames in os.walk(data_dir):
             for filename in filenames:
                 if filename.endswith('.parquet'):
                     filepath = os.path.join(root, filename)
-                    # Отримуємо відносний шлях
-                    rel_path = os.path.relpath(filepath, env_data_dir)
+                    rel_path = os.path.relpath(filepath, data_dir)
+
+                    # Перевіряємо розмір
+                    file_size = os.path.getsize(filepath)
+                    if file_size == 0:
+                        print(f"Skipping empty file: {filepath}")
+                        continue
+
                     try:
                         df = pd.read_parquet(filepath)
-                        files.append({
-                            'name': filename,
-                            'path': rel_path,
-                            'full_path': filepath,
-                            'size': os.path.getsize(filepath),
-                            'rows': len(df),
-                            'columns': list(df.columns),
-                            'numeric_columns': list(df.select_dtypes(include=['number']).columns)
-                        })
+                        if len(df) > 0:
+                            files.append({
+                                'name': filename,
+                                'path': rel_path,
+                                'full_path': filepath,
+                                'size': file_size,
+                                'rows': len(df),
+                                'columns': list(df.columns),
+                                'numeric_columns': list(df.select_dtypes(include=['number']).columns)
+                            })
                     except Exception as e:
                         print(f"Error reading {filepath}: {e}")
                         pass
+    else:
+        print(f"Directory not found: {data_dir}")
 
     return JsonResponse({
         'success': True,
         'files': files
     })
-
-
-def load_custom_columns(request):
-    """Завантажити дані з вибраними колонками"""
-    if request.method == 'POST':
-        try:
-            file_name = request.POST.get('file_name')
-            x_column = request.POST.get('x_column')
-            y_column = request.POST.get('y_column')
-
-            parquet_dir = os.path.join(settings.BASE_DIR, 'data', 'parquet')
-            file_path = os.path.join(parquet_dir, file_name)
-
-            df = pd.read_parquet(file_path)
-
-            # Вибираємо потрібні колонки
-            data = []
-            for idx in range(len(df)):
-                try:
-                    data.append({
-                        'x': float(df[x_column].iloc[idx]),
-                        'y': float(df[y_column].iloc[idx])
-                    })
-                except (ValueError, TypeError):
-                    continue
-
-            return JsonResponse({
-                'success': True,
-                'data': data[:1000]  # Обмежуємо до 1000 точок
-            })
-
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e)
-            }, status=400)
-
-    return JsonResponse({'success': False, 'error': 'Invalid request'}, status=400)
