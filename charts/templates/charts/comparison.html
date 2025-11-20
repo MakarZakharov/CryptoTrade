@@ -192,82 +192,88 @@
             document.getElementById('info-panel').style.display = 'none';
         }
 
-        const commonOptions = {
-            responsive: true,
-            maintainAspectRatio: true,
-            aspectRatio: 2.5,
-            interaction: {
-                mode: 'nearest',
-                intersect: false,
-                axis: 'x'
-            },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    enabled: false
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    position: 'bottom',
-                    ticks: {
-                        color: '#ffffff',
-                        font: { size: 13, weight: 'bold' },
-                        maxTicksLimit: 8,
-                        autoSkip: true,
-                        callback: function(value) {
-                            const chartId = this.chart.canvas.id;
-                            const datesArray = chartId === 'chart1' ? dates1 : dates2;
-                            const idx = Math.round(value);
-                            if (datesArray && datesArray.length > 0 && idx >= 0 && idx < datesArray.length) {
-                                return datesArray[idx];
-                            }
-                            return null;
+        function getChartOptions(chartId, dataArray) {
+        return {
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 2.5,
+        interaction: {
+            mode: 'nearest',
+            intersect: false,
+            axis: 'x'
+        },
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                enabled: false
+            }
+        },
+        scales: {
+            x: {
+                type: 'linear',
+                position: 'bottom',
+                min: 0,
+                max: dataArray.length > 0 ? dataArray.length - 1 : 10,
+                ticks: {
+                    color: '#ffffff',
+                    font: { size: 13, weight: 'bold' },
+                    maxTicksLimit: 8,
+                    autoSkip: true,
+                    callback: function(value) {
+                        const datesArray = chartId === 'chart1' ? dates1 : dates2;
+                        const idx = Math.round(value);
+                        if (datesArray && datesArray.length > 0 && idx >= 0 && idx < datesArray.length) {
+                            return datesArray[idx];
                         }
-                    },
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.15)',
-                        drawBorder: true,
-                        borderColor: '#ffffff',
-                        borderWidth: 2
-                    },
-                    title: {
-                        display: true,
-                        text: 'Дата / Час',
-                        color: '#ffffff',
-                        font: { size: 16, weight: 'bold' },
-                        padding: { top: 10, bottom: 0 }
+                        return null;
                     }
                 },
-                y: {
-                    type: 'linear',
-                    position: 'left',
-                    ticks: {
-                        color: '#ffffff',
-                        font: { size: 13, weight: 'bold' },
-                        callback: function(value) {
-                            if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
-                            if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
-                            return value.toFixed(0);
-                        }
-                    },
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.15)',
-                        drawBorder: true,
-                        borderColor: '#ffffff',
-                        borderWidth: 2
-                    },
-                    title: {
-                        display: true,
-                        text: 'Ціна (USD)',
-                        color: '#ffffff',
-                        font: { size: 16, weight: 'bold' },
-                        padding: { right: 10 }
+                grid: {
+                    color: 'rgba(255, 255, 255, 0.15)',
+                    drawBorder: true,
+                    borderColor: '#ffffff',
+                    borderWidth: 2
+                },
+                title: {
+                    display: true,
+                    text: 'Дата / Час',
+                    color: '#ffffff',
+                    font: { size: 16, weight: 'bold' },
+                    padding: { top: 10, bottom: 0 }
+                }
+            },
+            y: {
+                type: 'linear',
+                position: 'left',
+                beginAtZero: false,
+                ticks: {
+                    color: '#ffffff',
+                    font: { size: 13, weight: 'bold' },
+                    maxTicksLimit: 8,
+                    callback: function(value) {
+                        if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                        if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+                        if (value >= 1) return value.toFixed(0);
+                        return value.toFixed(2);
                     }
+                },
+                grid: {
+                    color: 'rgba(255, 255, 255, 0.15)',
+                    drawBorder: true,
+                    borderColor: '#ffffff',
+                    borderWidth: 2
+                },
+                title: {
+                    display: true,
+                    text: 'Ціна (USD)',
+                    color: '#ffffff',
+                    font: { size: 16, weight: 'bold' },
+                    padding: { right: 10 }
                 }
             }
-        };
+        }
+    };
+}
 
         function setupChartEvents(chart) {
             const canvas = chart.canvas;
@@ -313,7 +319,7 @@
                         tension: 0.4
                     }]
                 },
-                options: commonOptions,
+                options: getChartOptions('chart1', data1),
                 plugins: [crosshairPlugin]
             });
 
@@ -331,7 +337,7 @@
                         tension: 0.4
                     }]
                 },
-                options: commonOptions,
+                options: getChartOptions('chart2', data2),
                 plugins: [crosshairPlugin]
             });
 
