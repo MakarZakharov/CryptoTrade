@@ -12,12 +12,13 @@
     <script>
         let chart1 = null;
         let chart2 = null;
-        let currentX = null;
+        let mouseX = null;
         let data1 = [];
         let data2 = [];
         let dates1 = [];
         let dates2 = [];
         let availableFiles = [];
+        let isHovering = false;
 
         document.getElementById('root').innerHTML = `
             <div class="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-8">
@@ -28,7 +29,7 @@
                     <div class="bg-white/10 backdrop-blur-md rounded-lg p-4 mb-6 border border-white/20">
                         <div class="flex gap-4 justify-center">
                             <button id="modeStatic" class="px-6 py-2 bg-blue-500 text-white rounded-lg font-semibold transition-all">
-                                📁 Вибрати з сервера
+                                📋 Вибрати з сервера
                             </button>
                             <button id="modeUpload" class="px-6 py-2 bg-white/20 text-white rounded-lg font-semibold transition-all hover:bg-white/30">
                                 📤 Завантажити файли
@@ -65,12 +66,12 @@
                             <div>
                                 <label class="block text-white mb-2 font-semibold">📊 Файл 1 (Parquet)</label>
                                 <input type="file" id="file1" accept=".parquet" class="w-full px-4 py-2 bg-white/10 border border-white/30 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-500 file:text-white hover:file:bg-blue-600 cursor-pointer">
-                                <p class="text-xs text-slate-400 mt-1" id="file1-info">Очікується числові дані</p>
+                                <p class="text-xs text-slate-400 mt-1" id="file1-info">Очікуються числові дані</p>
                             </div>
                             <div>
                                 <label class="block text-white mb-2 font-semibold">📈 Файл 2 (Parquet)</label>
                                 <input type="file" id="file2" accept=".parquet" class="w-full px-4 py-2 bg-white/10 border border-white/30 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-green-500 file:text-white hover:file:bg-green-600 cursor-pointer">
-                                <p class="text-xs text-slate-400 mt-1" id="file2-info">Очікується числові дані</p>
+                                <p class="text-xs text-slate-400 mt-1" id="file2-info">Очікуються числові дані</p>
                             </div>
                         </div>
                         <button id="loadUploadBtn" class="mt-4 w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold py-3 px-6 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all transform hover:scale-105">
@@ -104,13 +105,13 @@
                     <div class="space-y-6">
                         <div class="bg-white/5 backdrop-blur-md rounded-lg p-6 border border-white/10">
                             <h2 class="text-2xl font-semibold text-white mb-4">📊 Графік 1</h2>
-                            <div style="height: 300px;">
+                            <div style="height: 300px; position: relative;">
                                 <canvas id="chart1"></canvas>
                             </div>
                         </div>
                         <div class="bg-white/5 backdrop-blur-md rounded-lg p-6 border border-white/10">
                             <h2 class="text-2xl font-semibold text-white mb-4">📈 Графік 2</h2>
-                            <div style="height: 300px;">
+                            <div style="height: 300px; position: relative;">
                                 <canvas id="chart2"></canvas>
                             </div>
                         </div>
@@ -123,18 +124,17 @@
             </div>
         `;
 
-        const verticalLinePlugin = {
-            id: 'verticalLine',
+        const crosshairPlugin = {
+            id: 'crosshair',
             afterDraw: (chart) => {
-                if (currentX !== null && chart.tooltip._active && chart.tooltip._active.length) {
+                if (mouseX !== null && isHovering) {
                     const ctx = chart.ctx;
-                    const x = chart.tooltip._active[0].element.x;
-                    const topY = chart.scales.y.top;
-                    const bottomY = chart.scales.y.bottom;
+                    const chartArea = chart.chartArea;
+
                     ctx.save();
                     ctx.beginPath();
-                    ctx.moveTo(x, topY);
-                    ctx.lineTo(x, bottomY);
+                    ctx.moveTo(mouseX, chartArea.top);
+                    ctx.lineTo(mouseX, chartArea.bottom);
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = '#ff0000';
                     ctx.setLineDash([5, 5]);
@@ -144,19 +144,67 @@
             }
         };
 
+        function getValueAtMousePosition(chart, mouseXPos) {
+            if (!chart || !chart.scales || !chart.data.datasets[0]) return null;
+
+            const xScale = chart.scales.x;
+            const xValue = xScale.getValueForPixel(mouseXPos);
+
+            if (xValue === null || xValue === undefined) return null;
+
+            const dataset = chart.data.datasets[0].data;
+            if (!dataset || dataset.length === 0) return null;
+
+            let closestIndex = Math.round(xValue);
+            closestIndex = Math.max(0, Math.min(closestIndex, dataset.length - 1));
+
+            return {
+                index: closestIndex,
+                value: dataset[closestIndex]
+            };
+        }
+
+        function updateInfo(xPos) {
+            if (xPos === null) {
+                hideInfo();
+                return;
+            }
+
+            const info1 = getValueAtMousePosition(chart1, xPos);
+            const info2 = getValueAtMousePosition(chart2, xPos);
+
+            if (info1 || info2) {
+                document.getElementById('info-panel').style.display = 'block';
+
+                const dateText1 = info1 && dates1[info1.index] ? dates1[info1.index] : '-';
+                const dateText2 = info2 && dates2[info2.index] ? dates2[info2.index] : '-';
+                const dateText = dateText1 !== '-' ? dateText1 : dateText2;
+
+                document.getElementById('pos-x').textContent = dateText;
+                document.getElementById('value-1').textContent = info1 && info1.value ? info1.value.y.toFixed(2) : '-';
+                document.getElementById('value-2').textContent = info2 && info2.value ? info2.value.y.toFixed(2) : '-';
+            } else {
+                hideInfo();
+            }
+        }
+
+        function hideInfo() {
+            document.getElementById('info-panel').style.display = 'none';
+        }
+
         const commonOptions = {
             responsive: true,
             maintainAspectRatio: true,
             aspectRatio: 2.5,
-            interaction: { mode: 'index', intersect: false },
+            interaction: {
+                mode: 'nearest',
+                intersect: false,
+                axis: 'x'
+            },
             plugins: {
                 legend: { display: false },
                 tooltip: {
-                    enabled: true,
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    titleColor: '#fff',
-                    bodyColor: '#fff',
-                    borderWidth: 1
+                    enabled: false
                 }
             },
             scales: {
@@ -175,7 +223,7 @@
                             if (datesArray && datesArray.length > 0 && idx >= 0 && idx < datesArray.length) {
                                 return datesArray[idx];
                             }
-                            return null; // Не показуємо числа, якщо немає дат
+                            return null;
                         }
                     },
                     grid: {
@@ -218,22 +266,34 @@
                         padding: { right: 10 }
                     }
                 }
-            },
-            onHover: (event, activeElements, chart) => {
-                if (activeElements.length > 0) {
-                    const index = activeElements[0].index;
-                    currentX = index;
-                    updateInfo(index);
-                    if (chart1) chart1.update('none');
-                    if (chart2) chart2.update('none');
-                } else {
-                    currentX = null;
-                    hideInfo();
-                    if (chart1) chart1.update('none');
-                    if (chart2) chart2.update('none');
-                }
             }
         };
+
+        function setupChartEvents(chart) {
+            const canvas = chart.canvas;
+
+            canvas.addEventListener('mousemove', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+
+                isHovering = true;
+                mouseX = x;
+
+                updateInfo(x);
+
+                if (chart1) chart1.update('none');
+                if (chart2) chart2.update('none');
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                isHovering = false;
+                mouseX = null;
+                hideInfo();
+
+                if (chart1) chart1.update('none');
+                if (chart2) chart2.update('none');
+            });
+        }
 
         function createCharts() {
             if (chart1) chart1.destroy();
@@ -253,14 +313,8 @@
                         tension: 0.4
                     }]
                 },
-                options: {
-                    ...commonOptions,
-                    plugins: {
-                        ...commonOptions.plugins,
-                        tooltip: { ...commonOptions.plugins.tooltip, borderColor: '#3b82f6' }
-                    }
-                },
-                plugins: [verticalLinePlugin]
+                options: commonOptions,
+                plugins: [crosshairPlugin]
             });
 
             const ctx2 = document.getElementById('chart2').getContext('2d');
@@ -277,28 +331,12 @@
                         tension: 0.4
                     }]
                 },
-                options: {
-                    ...commonOptions,
-                    plugins: {
-                        ...commonOptions.plugins,
-                        tooltip: { ...commonOptions.plugins.tooltip, borderColor: '#10b981' }
-                    }
-                },
-                plugins: [verticalLinePlugin]
+                options: commonOptions,
+                plugins: [crosshairPlugin]
             });
-        }
 
-        function updateInfo(index) {
-            document.getElementById('info-panel').style.display = 'block';
-            const d1 = data1[index];
-            const d2 = data2[index];
-            document.getElementById('pos-x').textContent = d1 ? d1.x.toFixed(2) : (d2 ? d2.x.toFixed(2) : '-');
-            document.getElementById('value-1').textContent = d1 ? d1.y.toFixed(2) : '-';
-            document.getElementById('value-2').textContent = d2 ? d2.y.toFixed(2) : '-';
-        }
-
-        function hideInfo() {
-            document.getElementById('info-panel').style.display = 'none';
+            setupChartEvents(chart1);
+            setupChartEvents(chart2);
         }
 
         function showError(message) {
