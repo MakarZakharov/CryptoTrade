@@ -4,33 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="90637ab8-1a4c-4135-a7f7-620c147e8c03" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/SPECIFICATION.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/config.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/crypto_trading_env.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/examples/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/examples/basic_usage.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/examples/custom_config.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/examples/evaluate_agent.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/examples/train_sb3.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/indicators.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/tests/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/DRL/Environment/tests/test_crypto_env.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/INSTALLATION_COMPLETE.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/PROJECT_SUMMARY.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/QUICKSTART.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/SWEEP.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/VERIFICATION_REPORT.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/install.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/requirements-minimal.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/EnvironmentData/CreateData/binance/collect_data_parquet.py" beforeDir="false" afterPath="$PROJECT_DIR$/EnvironmentData/CreateData/binance/collect_data_parquet.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/15m/2018_01_01-2025_10_25.parquet" beforeDir="false" afterPath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/15m/2018_01_01-2025_10_25.parquet" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/1d/2018_01_01-2025_10_25.parquet" beforeDir="false" afterPath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/1d/2018_01_01-2025_10_25.parquet" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/1h/2018_01_01-2025_10_25.parquet" beforeDir="false" afterPath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/1h/2018_01_01-2025_10_25.parquet" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/4h/2018_01_01-2025_10_25.parquet" beforeDir="false" afterPath="$PROJECT_DIR$/EnvironmentData/data/binance/BTCUSDT/parquet/4h/2018_01_01-2025_10_25.parquet" afterDir="false" />
-    </list>
+    <list default="true" id="90637ab8-1a4c-4135-a7f7-620c147e8c03" name="Changes" comment="Add detailed crypto trading environment implementation" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -45,7 +19,20 @@
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="UPDATE_TYPE" value="REBASE" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "MakarZakharov"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/MakarZakharov/CryptoTrade.git",
+    "accountId": "4e7d3f46-e4b1-4cdc-a690-415449e19605"
+  }
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 7
 }</component>
@@ -54,19 +41,19 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "dev.sweep.assistant.data.RecentlyUsedFiles": "DRL/Environment/examples/evaluate_agent.py;test_drl_training.py;comprehensive_test.py;DRL/Environment/examples/basic_usage.py;SWEEP.md;DRL/Environment/tests/test_crypto_env.py;DRL/Environment/crypto_trading_env.py;EnvironmentData/CreateData/binance/collect_data_parquet.py;DRL/Environment/__init__.py",
-    "git-widget-placeholder": "drl-changes-clean",
-    "settings.editor.selected.configurable": "preferences.pluginManager",
-    "sweep.chatMode": "Agent",
-    "sweep.selectedModel": "GPT-5-Codex (high)"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;dev.sweep.assistant.data.RecentlyUsedFiles&quot;: &quot;DRL/Environment/examples/evaluate_agent.py;test_drl_training.py;comprehensive_test.py;DRL/Environment/examples/basic_usage.py;SWEEP.md;DRL/Environment/tests/test_crypto_env.py;DRL/Environment/crypto_trading_env.py;EnvironmentData/CreateData/binance/collect_data_parquet.py;DRL/Environment/__init__.py&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;drl-changes-clean&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
+    &quot;sweep.chatMode&quot;: &quot;Agent&quot;,
+    &quot;sweep.selectedModel&quot;: &quot;GPT-5-Codex (high)&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -82,6 +69,19 @@
       <option name="presentableId" value="Default" />
       <updated>1763267102347</updated>
     </task>
+    <task id="LOCAL-00001" summary="Add detailed crypto trading environment implementation">
+      <option name="closed" value="true" />
+      <created>1763666323296</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1763666323296</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Add detailed crypto trading environment implementation" />
+    <option name="LAST_COMMIT_MESSAGE" value="Add detailed crypto trading environment implementation" />
   </component>
 </project>
