@@ -25,7 +25,7 @@ class BinanceDataCollector:
         # Определяем базовый путь для сохранения данных
         if base_path is None:
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            self.base_path = os.path.join(current_dir, "..", "..", "Date", "binance", symbol)
+            self.base_path = os.path.join(current_dir, "..", "..", "data", "binance", symbol, "parquet")
         else:
             self.base_path = base_path
 

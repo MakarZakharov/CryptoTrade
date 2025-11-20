@@ -1,0 +1,57 @@
+# Core Dependencies for CryptoTrade DRL Environment
+# Python 3.8+
+
+# Environment and RL Framework
+gymnasium>=0.29.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Data handling
+pyarrow>=14.0.0  # For parquet file support
+fastparquet>=2023.10.0  # Alternative parquet engine
+
+# Deep Learning / RL Libraries
+stable-baselines3>=2.0.0  # For RL training
+torch>=2.0.0  # PyTorch backend for SB3
+sb3-contrib>=2.0.0  # Additional SB3 algorithms
+
+# Optional: RLlib support
+# ray[rllib]>=2.7.0  # Uncomment for RLlib support
+
+# Technical Analysis & Indicators
+ta-lib>=0.4.28  # Optional: Advanced TA library (requires system libta-lib)
+# Note: ta-lib requires system library installation first:
+# Ubuntu/Debian: apt-get install libta-lib-dev
+# macOS: brew install ta-lib
+
+# Visualization
+matplotlib>=3.7.0
+plotly>=5.17.0
+seaborn>=0.12.0
+
+# Performance & Optimization
+numba>=0.58.0  # JIT compilation for faster execution
+scipy>=1.11.0  # Scientific computing
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Utilities
+tqdm>=4.66.0  # Progress bars
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Data Collection (Binance)
+python-binance>=1.0.19  # For collecting live/historical data
+requests>=2.31.0
+
+# Jupyter/Notebook support (optional)
+jupyter>=1.0.0
+ipywidgets>=8.1.0
+notebook>=7.0.0
+
+# Development tools (optional)
+black>=23.10.0  # Code formatter
+flake8>=6.1.0  # Linter
+mypy>=1.6.0  # Type checker
