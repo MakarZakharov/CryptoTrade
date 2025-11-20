@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GhostTextManager">
+    <option name="inputs">
+      <map>
+        <entry key="check my environment">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763659786720" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="create it in the Enviroment file and use data from EnviromentDate file">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763270259249" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="do it">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="2.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763660235234" />
+                  <option value="1763660020000" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="does the environment work as it should you foture DRL agen traning for ccrypto">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="4.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763662511641" />
+                  <option value="1763662010093" />
+                  <option value="1763661927658" />
+                  <option value="1763661440000" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="fix all the problems">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="3.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763274870288" />
+                  <option value="1763274651230" />
+                  <option value="1763274181563" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="how can I test the envinroment">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763662919420" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="install everything">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763660673326" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="is everything istalled ?">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763660940346" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="klj">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763663393623" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="solve the problem">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="2.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763273648998" />
+                  <option value="1763273478639" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="test the Enviroment and tell me the results">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="2.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763273248795" />
+                  <option value="1763273103024" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="test the environment and say whether it is ready">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763662590680" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+        <entry key="┌──(kali㉿kali)-[~/PycharmProjects/CryptoTrade]&#10;└─$ /home/kali/PycharmProjects/CryptoTrade/venv/bin/python \&#10;    /home/kali/PycharmProjects/CryptoTrade/DRL/Environment/examples/evaluate_agent.py&#10;                                                                                                                                                                                                                                    &#10;┌──(kali㉿kali)-[~/PycharmProjects/CryptoTrade]&#10;└─$ /home/kali/PycharmProjects/CryptoTrade/venv/bin/python \&#10;    /home/kali/PycharmProjects/CryptoTrade/DRL/Environment/examples/evaluate_agent.py&#10;                                                                                                                                                                                                                                    &#10;┌──(kali㉿kali)-[~/PycharmProjects/CryptoTrade]">
+          <value>
+            <GhostTextMetaData>
+              <option name="count" value="1.0" />
+              <option name="timestamps">
+                <list>
+                  <option value="1763663251382" />
+                </list>
+              </option>
+            </GhostTextMetaData>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>
